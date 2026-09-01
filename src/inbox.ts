@@ -188,6 +188,9 @@ export class IntercomInbox {
   private stopped = false;
   private tickRunning = false;
 
+  /** Conversations currently being worked on, so no two workers touch one. */
+  private readonly inFlight = new Set<string>();
+
   constructor(
     private readonly client: IntercomClient,
     private readonly adminId: string,
@@ -195,7 +198,34 @@ export class IntercomInbox {
     private readonly onMessage: (message: InboundIntercomMessage) => Promise<void>,
     private readonly logger: IntercomInboxLogger,
     private readonly pickupUnassigned: boolean = true,
+    private readonly maxConcurrentConversations: number = 10,
   ) {}
+
+  /**
+   * Run `work` for a conversation unless that conversation is already being
+   * handled. Poll ticks and webhook deliveries share this gate, so a
+   * conversation is only ever driven by one worker at a time and its parts stay
+   * in order even while other conversations run in parallel.
+   *
+   * Returns false when the conversation was already claimed.
+   */
+  async withConversationLock<T>(
+    conversationId: string,
+    work: () => Promise<T>,
+  ): Promise<T | false> {
+    if (this.inFlight.has(conversationId)) return false;
+    this.inFlight.add(conversationId);
+    try {
+      return await work();
+    } finally {
+      this.inFlight.delete(conversationId);
+    }
+  }
+
+  /** Conversations in flight right now. Exposed for diagnostics and tests. */
+  get activeConversations(): number {
+    return this.inFlight.size;
+  }
 
   /** Record a part id (e.g. our own outbound reply) so ingest never dispatches it. */
   markOwnPart(conversationId: string, partId: string): void {
@@ -270,25 +300,55 @@ export class IntercomInbox {
 
     let dispatched = 0;
     let claimed = 0;
-    for (const { conversation, unassigned: wasUnassigned } of byId.values()) {
-      if (this.stopped) return;
-      const full = await this.client.getConversation(conversation.id);
-      // Claim unassigned conversations so the bot owns follow-up and they move
-      // into the assigned inbox (also avoids re-scanning them as unassigned).
-      if (this.pickupUnassigned && wasUnassigned && isUnassigned(full)) {
+    let skipped = 0;
+
+    // Work on several conversations at once, but finish each one — reply,
+    // notes, tags, then close or escalate — before that worker starts another.
+    // Everything for a single conversation stays sequential and in order.
+    const queue = [...byId.values()];
+    const workerCount = Math.max(1, Math.min(this.maxConcurrentConversations, queue.length));
+
+    const runOne = async (entry: (typeof queue)[number]): Promise<void> => {
+      const { conversation, unassigned: wasUnassigned } = entry;
+      const outcome = await this.withConversationLock(conversation.id, async () => {
+        const full = await this.client.getConversation(conversation.id);
+        // Claim unassigned conversations so the bot owns follow-up and they move
+        // into the assigned inbox (also avoids re-scanning them as unassigned).
+        if (this.pickupUnassigned && wasUnassigned && isUnassigned(full)) {
+          try {
+            await this.client.assign(full.id, this.adminId);
+            claimed += 1;
+          } catch (err) {
+            this.logger.warn(`intercom: failed to claim conversation ${full.id}: ${String(err)}`);
+          }
+        }
+        return this.ingestConversation(full);
+      });
+      if (outcome === false) skipped += 1;
+      else dispatched += outcome;
+    };
+
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        if (this.stopped) return;
+        const entry = queue.shift();
+        if (!entry) return;
         try {
-          await this.client.assign(full.id, this.adminId);
-          claimed += 1;
+          await runOne(entry);
         } catch (err) {
-          this.logger.warn(`intercom: failed to claim conversation ${full.id}: ${String(err)}`);
+          // One bad conversation must not abort the rest of the tick.
+          this.logger.error(
+            `intercom: failed to process conversation ${entry.conversation.id}: ${String(err)}`,
+          );
         }
       }
-      dispatched += await this.ingestConversation(full);
-    }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
     if (dispatched > 0 || claimed > 0) {
       this.logger.info(
-        `intercom: poll scanned ${byId.size} conversation(s) (${assigned.length} assigned, ${unassigned.length} unassigned); dispatched ${dispatched} message(s), claimed ${claimed}`,
+        `intercom: poll scanned ${byId.size} conversation(s) (${assigned.length} assigned, ${unassigned.length} unassigned) with ${workerCount} worker(s); dispatched ${dispatched} message(s), claimed ${claimed}${skipped > 0 ? `, skipped ${skipped} already in flight` : ""}`,
       );
     }
   }

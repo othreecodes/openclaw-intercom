@@ -119,7 +119,8 @@ A fuller example with every option set:
       "escalationAssigneeType": "admin",
       "createMissingTags": true,
       "contactContext": true,
-      "persona": "You are Ocean from Cowrywise Support — warm, direct, and professional."
+      "persona": "You are Ocean from Cowrywise Support — warm, direct, and professional.",
+      "maxConcurrentConversations": 10
     }
   }
 }
@@ -142,6 +143,28 @@ A fuller example with every option set:
 | `createMissingTags` | boolean | `true` | Create tags that don't exist yet when the agent emits `[[tag: ...]]`. |
 | `contactContext` | boolean | `true` | Fetch the customer's contact profile and give it to the agent as reply context. |
 | `persona` | string | neutral support voice | Voice/identity the agent adopts when replying to customers. See [Support persona](#support-persona). |
+| `maxConcurrentConversations` | number | `10` | How many conversations the agent works on at once. Each one is finished before that worker starts another. See [Throughput](#throughput). |
+
+#### Throughput
+
+`maxConcurrentConversations` (default `10`) caps how many conversations the agent
+works on at the same time.
+
+Within a conversation nothing is parallel: the agent replies, adds any notes,
+applies tags, and then closes or escalates before that worker picks up the next
+conversation. So a conversation is always finished rather than left half-answered,
+and its parts are handled in order. Raising the limit adds more conversations
+side by side; it never splits one conversation across workers.
+
+A poll tick and a webhook delivery for the same conversation cannot run at once
+either — whichever arrives second is skipped and picked up on the next pass.
+
+Two things to size against:
+
+- Your model's throughput and cost. Each conversation in flight is a live agent
+  turn.
+- `agents.defaults.maxConcurrent` in your OpenClaw config, which caps concurrent
+  agent runs gateway-wide. If it is lower than this setting, it is the real limit.
 
 #### Support persona
 

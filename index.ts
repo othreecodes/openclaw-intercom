@@ -208,6 +208,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     dispatchMessage,
     api.logger,
     account.pickupUnassigned,
+    account.maxConcurrentConversations,
   );
   registerIntercomInbox(account.accountId, inbox);
 
@@ -242,6 +243,8 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     description: "Stop the Intercom poll loop and release runtime state",
     cleanup: () => {
       inbox.stop();
+      // Fold the dedupe journal into its snapshot so the next start replays less.
+      dedupe.close();
       unregisterIntercomInbox(account.accountId);
     },
   });
