@@ -1,51 +1,67 @@
 {
   "id": "intercom",
-  "channels": [
-    "intercom"
-  ],
+  "name": "Intercom",
+  "description": "Intercom support channel plugin (polling + webhook inbound, auto-reply)",
+  "channels": ["intercom"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
   "channelConfigs": {
     "intercom": {
       "schema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
           "token": {
             "type": "string",
-            "uiHints": {
-              "sensitive": true
-            }
+            "description": "Intercom access token"
           },
           "adminId": {
             "type": "string",
-            "description": "Optional bot admin ID (auto-resolved if omitted)"
-          },
-          "pollIntervalSeconds": {
-            "type": "number",
-            "default": 20
-          },
-          "apiVersion": {
-            "type": "string",
-            "default": "2.16"
+            "description": "Bot admin id; auto-resolved via GET /me when omitted"
           },
           "inbound": {
             "type": "string",
-            "enum": [
-              "poll",
-              "webhook",
-              "both"
-            ],
-            "default": "poll"
+            "enum": ["poll", "webhook", "both"],
+            "default": "poll",
+            "description": "Inbound delivery mode"
+          },
+          "pollIntervalSeconds": {
+            "type": "number",
+            "default": 20,
+            "description": "Poll interval for assigned open conversations"
           },
           "webhookSecret": {
             "type": "string",
-            "uiHints": {
-              "sensitive": true
-            },
-            "description": "Intercom App Client Secret used to verify X-Hub-Signature"
+            "description": "Intercom app client secret used to verify X-Hub-Signature"
+          },
+          "apiVersion": {
+            "type": "string",
+            "default": "2.16",
+            "description": "Intercom-Version request header"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional allowlist of Intercom contact ids"
           }
         },
-        "required": [
-          "token"
-        ]
+        "required": ["token"]
+      },
+      "uiHints": {
+        "token": {
+          "label": "Access token",
+          "sensitive": true
+        },
+        "webhookSecret": {
+          "label": "Webhook secret",
+          "sensitive": true
+        }
       }
     }
   }

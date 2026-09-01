@@ -1,53 +1,93 @@
-
 import crypto from "node:crypto";
-import { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { IntercomWebhookPayload } from "./types.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IntercomInbox, IntercomInboxLogger } from "./inbox.js";
+import type { IntercomWebhookPayload } from "./types.js";
 
-export function verifyIntercomSignature(body: string, secret: string, signature: string): boolean {
+const HANDLED_TOPICS = new Set(["conversation.user.created", "conversation.user.replied"]);
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+export function verifyIntercomSignature(rawBody: string | Buffer, secret: string, signature: string): boolean {
   if (!signature.startsWith("sha1=")) return false;
-  const expected = signature.slice(5);
-  const actual = crypto.createHmac("sha1", secret).update(body).digest("hex");
-  try {
-    return crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
-  } catch (e) {
-    return false;
-  }
+  const expected = Buffer.from(signature.slice(5), "hex");
+  const actual = crypto.createHmac("sha1", secret).update(rawBody).digest();
+  if (expected.length !== actual.length || expected.length === 0) return false;
+  return crypto.timingSafeEqual(actual, expected);
 }
 
-export function handleIntercomWebhook(
-  api: OpenClawPluginApi,
-  secret: string,
-  onNewPart: (conversationId: string, body: string, authorId: string, partId: string) => Promise<void>
-) {
-  return async (req: any, res: any) => {
-    const signature = req.headers["x-hub-signature"] as string;
-    
-    // In OpenClaw, req.rawBody is typically available for signature verification
-    const body = req.rawBody || JSON.stringify(req.body);
+function readRawBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("intercom webhook body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
 
-    if (!signature || !verifyIntercomSignature(body, secret, signature)) {
-      api.logger.warn("Intercom webhook: invalid signature");
-      res.status(401).send("Invalid signature");
-      return;
+function respond(res: ServerResponse, status: number, text: string): void {
+  res.statusCode = status;
+  res.end(text);
+}
+
+/**
+ * Node HTTP handler for `POST /intercom/webhook`. Verifies the Intercom
+ * `X-Hub-Signature` (HMAC-SHA1 of the raw body) and funnels handled topics
+ * into the shared inbox ingest path.
+ */
+export function createIntercomWebhookHandler(params: {
+  secret: string;
+  inbox: IntercomInbox;
+  logger: IntercomInboxLogger;
+}) {
+  const { secret, inbox, logger } = params;
+  return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+    if ((req.method ?? "").toUpperCase() !== "POST") {
+      respond(res, 405, "method not allowed");
+      return true;
     }
 
-    const payload = req.body as IntercomWebhookPayload;
-    const item = payload.data.item;
-    const conversationId = item.id;
-
-    api.logger.info(`Intercom webhook received: ${payload.topic} for conversation ${conversationId}`);
-
-    if (payload.topic === "conversation.user.created") {
-       await onNewPart(conversationId, item.source.body, item.source.author.id, `source-${conversationId}`);
-    } else if (payload.topic === "conversation.user.replied") {
-       // Find the most recent user part
-       const parts = item.conversation_parts.conversation_parts;
-       const lastUserPart = [...parts].reverse().find(p => p.author.type === "user");
-       if (lastUserPart && lastUserPart.body) {
-         await onNewPart(conversationId, lastUserPart.body, lastUserPart.author.id, lastUserPart.id);
-       }
+    let rawBody: Buffer;
+    try {
+      rawBody = await readRawBody(req);
+    } catch (err) {
+      logger.warn(`intercom webhook: failed to read body: ${String(err)}`);
+      respond(res, 400, "bad request");
+      return true;
     }
 
-    res.status(200).send("OK");
+    const signature = req.headers["x-hub-signature"];
+    if (typeof signature !== "string" || !verifyIntercomSignature(rawBody, secret, signature)) {
+      logger.warn("intercom webhook: invalid or missing X-Hub-Signature");
+      respond(res, 401, "invalid signature");
+      return true;
+    }
+
+    let payload: IntercomWebhookPayload;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8")) as IntercomWebhookPayload;
+    } catch {
+      respond(res, 400, "invalid json");
+      return true;
+    }
+
+    const topic = payload.topic ?? "";
+    const item = payload.data?.item;
+    if (HANDLED_TOPICS.has(topic) && item?.id) {
+      // Ack fast; ingest shares the poll path's dedupe so "both" mode never double-answers.
+      void inbox.ingestConversation(item).catch((err) => {
+        logger.error(`intercom webhook: ingest failed for conversation ${item.id}: ${String(err)}`);
+      });
+    }
+
+    respond(res, 200, "ok");
+    return true;
   };
 }
