@@ -1,5 +1,4 @@
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { intercomChannel } from "./src/channel.js";
 
-import { defineSetupPluginEntry } from "openclaw/plugin-sdk/core";
-import intercomEntry from "./index.js";
-
-export default defineSetupPluginEntry(intercomEntry);
+export default defineSetupPluginEntry(intercomChannel);
