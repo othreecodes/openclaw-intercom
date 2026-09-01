@@ -49,6 +49,36 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "Optional allowlist of Intercom contact ids"
+          },
+          "pickupUnassigned": {
+            "type": "boolean",
+            "default": true,
+            "description": "Also answer open conversations that are unassigned (Messenger/widget visitors land unassigned) and claim them for the bot admin"
+          },
+          "autoClose": {
+            "type": "boolean",
+            "default": true,
+            "description": "Close a conversation after replying when the agent emits a [[close]] directive or the customer's message reads as resolved (thanks, that's all)"
+          },
+          "escalationAssigneeId": {
+            "type": "string",
+            "description": "Teammate (admin) or team id the bot hands off to when the agent emits [[escalate]]"
+          },
+          "escalationAssigneeType": {
+            "type": "string",
+            "enum": ["admin", "team"],
+            "default": "admin",
+            "description": "Whether escalationAssigneeId refers to a teammate (admin) or a team"
+          },
+          "createMissingTags": {
+            "type": "boolean",
+            "default": true,
+            "description": "Create tags that don't exist yet when the agent emits [[tag: ...]]"
+          },
+          "contactContext": {
+            "type": "boolean",
+            "default": true,
+            "description": "Fetch the customer's Intercom contact profile and give it to the agent as reply context"
           }
         },
         "required": ["token"]

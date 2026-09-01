@@ -8,7 +8,16 @@ import { findLatestAdminPartId, intercomChannel, stripIntercomTargetPrefix } fro
 import { IntercomClient } from "./client.js";
 import { resolveIntercomAccount } from "./config.js";
 import { IntercomDedupeStore } from "./dedupe.js";
-import { IntercomInbox, intercomBodyToText, type InboundIntercomMessage } from "./inbox.js";
+import {
+  applyConversationTags,
+  IntercomInbox,
+  intercomBodyToText,
+  isResolutionPhrase,
+  parseCloseDirective,
+  parseDirectives,
+  summarizeContact,
+  type InboundIntercomMessage,
+} from "./inbox.js";
 import type { IntercomConversation } from "./types.js";
 import { createIntercomWebhookHandler, verifyIntercomSignature } from "./webhook.js";
 
@@ -324,6 +333,7 @@ describe("poll loop", () => {
     const dedupe = new IntercomDedupeStore(tempStateFile());
     const client = {
       searchAssignedConversations: vi.fn(async () => [{ id: "conv-1" }]),
+      searchUnassignedConversations: vi.fn(async () => []),
       getConversation: vi.fn(async () => conversation()),
     } as unknown as IntercomClient;
     const inbox = new IntercomInbox(client, "admin-1", dedupe, async (m) => {
@@ -333,6 +343,74 @@ describe("poll loop", () => {
     expect((client.searchAssignedConversations as any).mock.calls[0][0]).toBe("admin-1");
     expect((client.getConversation as any).mock.calls[0][0]).toBe("conv-1");
     expect(seen).toEqual(["source-src-1", "part-1"]);
+  });
+
+  it("picks up unassigned conversations, claims them, and answers lead visitors", async () => {
+    const seen: string[] = [];
+    const dedupe = new IntercomDedupeStore(tempStateFile());
+    const leadConversation = conversation({
+      id: "conv-2",
+      admin_assignee_id: 0,
+      team_assignee_id: 0,
+      source: {
+        id: "src-2",
+        body: "<p>HELOOOOO</p>",
+        // Widget visitors arrive as leads, not users.
+        author: { type: "lead", id: "lead-9", name: null },
+      },
+      conversation_parts: { conversation_parts: [] },
+    });
+    const client = {
+      searchAssignedConversations: vi.fn(async () => []),
+      searchUnassignedConversations: vi.fn(async () => [{ id: "conv-2" }]),
+      getConversation: vi.fn(async () => leadConversation),
+      assign: vi.fn(async () => leadConversation),
+    } as unknown as IntercomClient;
+    const inbox = new IntercomInbox(client, "admin-1", dedupe, async (m) => {
+      seen.push(m.partId);
+    }, silentLogger);
+    await inbox.pollOnce();
+    // Claimed for the bot admin before replying.
+    expect((client.assign as any).mock.calls[0]).toEqual(["conv-2", "admin-1"]);
+    // The lead's opening message was dispatched (not skipped as non-user).
+    expect(seen).toEqual(["source-src-2"]);
+  });
+
+  it("carries the customer name and email from the source author to the agent", async () => {
+    const seen: InboundIntercomMessage[] = [];
+    const dedupe = new IntercomDedupeStore(tempStateFile());
+    const named = conversation({
+      id: "conv-3",
+      source: {
+        id: "src-3",
+        body: "<p>Hi</p>",
+        author: { type: "user", id: "user-7", name: "Ada Lovelace", email: "ada@example.com" },
+      },
+      conversation_parts: { conversation_parts: [] },
+    });
+    const client = {
+      searchAssignedConversations: vi.fn(async () => [{ id: "conv-3" }]),
+      searchUnassignedConversations: vi.fn(async () => []),
+      getConversation: vi.fn(async () => named),
+    } as unknown as IntercomClient;
+    const inbox = new IntercomInbox(client, "admin-1", dedupe, async (m) => {
+      seen.push(m);
+    }, silentLogger);
+    await inbox.pollOnce();
+    expect(seen[0].authorName).toBe("Ada Lovelace");
+    expect(seen[0].authorEmail).toBe("ada@example.com");
+  });
+
+  it("does not search unassigned when pickupUnassigned is disabled", async () => {
+    const dedupe = new IntercomDedupeStore(tempStateFile());
+    const client = {
+      searchAssignedConversations: vi.fn(async () => []),
+      searchUnassignedConversations: vi.fn(async () => []),
+      getConversation: vi.fn(async () => conversation()),
+    } as unknown as IntercomClient;
+    const inbox = new IntercomInbox(client, "admin-1", dedupe, async () => {}, silentLogger, false);
+    await inbox.pollOnce();
+    expect((client.searchUnassignedConversations as any).mock.calls.length).toBe(0);
   });
 });
 
@@ -349,5 +427,155 @@ describe("helpers", () => {
 
   it("converts html bodies to text", () => {
     expect(intercomBodyToText("<p>Hi &amp; bye</p><p>line 2</p>")).toBe("Hi & bye\n\nline 2");
+  });
+});
+
+describe("auto-close", () => {
+  it("parses a [[close]] directive and strips it from the reply", () => {
+    expect(parseCloseDirective("All sorted! [[close]]")).toEqual({ text: "All sorted!", close: true });
+    expect(parseCloseDirective("[[ CLOSE ]]")).toEqual({ text: "", close: true });
+    expect(parseCloseDirective("Just a normal reply")).toEqual({
+      text: "Just a normal reply",
+      close: false,
+    });
+  });
+
+  it("is idempotent across calls (no lingering regex lastIndex state)", () => {
+    expect(parseCloseDirective("done [[close]]").close).toBe(true);
+    expect(parseCloseDirective("done [[close]]").close).toBe(true);
+  });
+
+  it("detects customer resolution phrases without false positives", () => {
+    expect(isResolutionPhrase("thanks, that's all")).toBe(true);
+    expect(isResolutionPhrase("great, it works now")).toBe(true);
+    expect(isResolutionPhrase("the issue is resolved")).toBe(true);
+    expect(isResolutionPhrase("no thanks")).toBe(true);
+    expect(isResolutionPhrase("but that's all I get is an error")).toBe(true);
+    expect(isResolutionPhrase("how do I reset my password?")).toBe(false);
+    expect(isResolutionPhrase("")).toBe(false);
+  });
+
+  it("parses escalate/note/tag directives and strips them from the reply", () => {
+    const d = parseDirectives(
+      "Sorry about that!\n[[escalate: needs billing team]]\n[[note: customer on Pro plan]]\n[[tag: billing, refund]]",
+    );
+    expect(d.text).toBe("Sorry about that!");
+    expect(d.escalate).toBe(true);
+    expect(d.escalateReason).toBe("needs billing team");
+    expect(d.notes).toEqual(["customer on Pro plan"]);
+    expect(d.tags).toEqual(["billing", "refund"]);
+    expect(d.close).toBe(false);
+  });
+
+  it("parses a bare [[escalate]] with no reason, and combines with [[close]]", () => {
+    const d = parseDirectives("All done here [[escalate]] [[close]]");
+    expect(d.text).toBe("All done here");
+    expect(d.escalate).toBe(true);
+    expect(d.escalateReason).toBeUndefined();
+    expect(d.close).toBe(true);
+  });
+
+  it("shapes the admin close part", async () => {
+    const mockFetch = vi.fn();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "conv-1" }),
+      text: async () => "{}",
+      headers: new Headers(),
+    });
+    const client = new IntercomClient("tok", "2.16", mockFetch as unknown as typeof fetch);
+    await client.close("conv-1", "admin-1");
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.intercom.io/conversations/conv-1/parts");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      message_type: "close",
+      type: "admin",
+      admin_id: "admin-1",
+    });
+  });
+});
+
+describe("agent capabilities: escalate, notes, tags, contact", () => {
+  function okResponse(json: unknown) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => json,
+      text: async () => JSON.stringify(json),
+      headers: new Headers(),
+    };
+  }
+
+  it("shapes a note as an admin note reply", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(okResponse({ id: "c1" }));
+    const client = new IntercomClient("tok", "2.16", mockFetch as unknown as typeof fetch);
+    await client.note("c1", "admin-1", "internal only");
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.intercom.io/conversations/c1/reply");
+    expect(JSON.parse(init.body)).toEqual({
+      message_type: "note",
+      type: "admin",
+      admin_id: "admin-1",
+      body: "internal only",
+    });
+  });
+
+  it("shapes an assignment to a team", async () => {
+    const mockFetch = vi.fn().mockResolvedValueOnce(okResponse({ id: "c1" }));
+    const client = new IntercomClient("tok", "2.16", mockFetch as unknown as typeof fetch);
+    await client.assignTo("c1", "admin-1", "team-9", "team");
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://api.intercom.io/conversations/c1/parts");
+    expect(JSON.parse(init.body)).toEqual({
+      message_type: "assignment",
+      type: "team",
+      admin_id: "admin-1",
+      assignee_id: "team-9",
+    });
+  });
+
+  it("looks up existing tags and attaches by id without creating", async () => {
+    const client = {
+      listTags: vi.fn(async () => [
+        { id: "t1", name: "Billing" },
+        { id: "t2", name: "Bug" },
+      ]),
+      createTag: vi.fn(),
+      tagConversation: vi.fn(async () => ({ id: "t1", name: "Billing" })),
+    } as unknown as IntercomClient;
+    const applied = await applyConversationTags(client, "c1", "admin-1", ["billing"], true);
+    expect(applied).toEqual(["Billing"]);
+    expect((client.createTag as any).mock.calls.length).toBe(0);
+    expect((client.tagConversation as any).mock.calls[0]).toEqual(["c1", "t1", "admin-1"]);
+  });
+
+  it("creates a missing tag when allowed, and skips it when not", async () => {
+    const makeClient = () =>
+      ({
+        listTags: vi.fn(async () => [{ id: "t1", name: "Billing" }]),
+        createTag: vi.fn(async (name: string) => ({ id: "t9", name })),
+        tagConversation: vi.fn(async () => ({ id: "t9", name: "refund" })),
+      }) as unknown as IntercomClient;
+
+    const creating = makeClient();
+    expect(await applyConversationTags(creating, "c1", "a1", ["refund"], true)).toEqual(["refund"]);
+    expect((creating.createTag as any).mock.calls[0][0]).toBe("refund");
+
+    const notCreating = makeClient();
+    expect(await applyConversationTags(notCreating, "c1", "a1", ["refund"], false)).toEqual([]);
+    expect((notCreating.createTag as any).mock.calls.length).toBe(0);
+  });
+
+  it("summarizes a contact profile into a compact line", () => {
+    const summary = summarizeContact({
+      id: "u1",
+      role: "user",
+      location: { city: "Lagos", region: null, country: "Nigeria" },
+      custom_attributes: { plan: "Pro", mrr: 49 },
+    });
+    expect(summary).toBe("user · Lagos, Nigeria · plan: Pro · mrr: 49");
+    expect(summarizeContact({ id: "u2" })).toBe("");
   });
 });

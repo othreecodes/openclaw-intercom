@@ -1,4 +1,4 @@
-import type { IntercomAdmin, IntercomConversation } from "./types.js";
+import type { IntercomAdmin, IntercomContact, IntercomConversation, IntercomTag } from "./types.js";
 
 const BASE_URL = "https://api.intercom.io";
 const MAX_RETRY_AFTER_SECONDS = 60;
@@ -70,6 +70,102 @@ export class IntercomClient {
       },
     );
     return data.conversations ?? [];
+  }
+
+  /** Open conversations that are not assigned to any admin (assignee id 0). */
+  async searchUnassignedConversations(): Promise<IntercomConversation[]> {
+    const data = await this.request<{ conversations?: IntercomConversation[] }>(
+      "POST",
+      "/conversations/search",
+      {
+        query: {
+          operator: "AND",
+          value: [
+            { field: "admin_assignee_id", operator: "=", value: 0 },
+            { field: "open", operator: "=", value: true },
+          ],
+        },
+        sort_by: "updated_at",
+        sort_order: "desc",
+      },
+    );
+    return data.conversations ?? [];
+  }
+
+  /** Assign a conversation to the bot admin so it owns follow-up. */
+  assign(conversationId: string, adminId: string): Promise<IntercomConversation> {
+    return this.assignTo(conversationId, adminId, adminId, "admin");
+  }
+
+  /** Assign/reassign a conversation to a teammate ("admin") or a "team". */
+  assignTo(
+    conversationId: string,
+    adminId: string,
+    assigneeId: string,
+    assigneeType: "admin" | "team" = "admin",
+  ): Promise<IntercomConversation> {
+    return this.request<IntercomConversation>(
+      "POST",
+      `/conversations/${encodeURIComponent(conversationId)}/parts`,
+      {
+        message_type: "assignment",
+        type: assigneeType,
+        admin_id: adminId,
+        assignee_id: assigneeId,
+      },
+    );
+  }
+
+  /** Add a private admin note (not visible to the customer). */
+  note(conversationId: string, adminId: string, body: string): Promise<IntercomConversation> {
+    return this.request<IntercomConversation>(
+      "POST",
+      `/conversations/${encodeURIComponent(conversationId)}/reply`,
+      {
+        message_type: "note",
+        type: "admin",
+        admin_id: adminId,
+        body,
+      },
+    );
+  }
+
+  /** Fetch a contact's profile for reply context. */
+  getContact(contactId: string): Promise<IntercomContact> {
+    return this.request<IntercomContact>("GET", `/contacts/${encodeURIComponent(contactId)}`);
+  }
+
+  /** List all workspace tags (id + name). */
+  async listTags(): Promise<IntercomTag[]> {
+    const data = await this.request<{ data?: IntercomTag[] }>("GET", "/tags");
+    return data.data ?? [];
+  }
+
+  /** Create a tag by name, returning it (Intercom is idempotent on name). */
+  createTag(name: string): Promise<IntercomTag> {
+    return this.request<IntercomTag>("POST", "/tags", { name });
+  }
+
+  /** Attach a tag (by id) to a conversation, as the acting admin. */
+  tagConversation(conversationId: string, tagId: string, adminId: string): Promise<IntercomTag> {
+    return this.request<IntercomTag>(
+      "POST",
+      `/conversations/${encodeURIComponent(conversationId)}/tags`,
+      { id: tagId, admin_id: adminId },
+    );
+  }
+
+  /** Close a conversation as the bot admin. */
+  close(conversationId: string, adminId: string): Promise<IntercomConversation> {
+    return this.request<IntercomConversation>(
+      "POST",
+      `/conversations/${encodeURIComponent(conversationId)}/parts`,
+      {
+        message_type: "close",
+        type: "admin",
+        admin_id: adminId,
+      },
+    );
   }
 
   getConversation(id: string): Promise<IntercomConversation> {
