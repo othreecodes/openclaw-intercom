@@ -121,6 +121,11 @@
               }
             },
             "description": "Core channel health monitoring. Disable for webhook-only inbound: the channel holds no long-lived connection, so the monitor reads it as stopped and restarts it in a loop, draining in-flight work."
+          },
+          "replyToExistingOnStart": {
+            "type": "boolean",
+            "default": false,
+            "description": "Answer conversations that already existed the first time this channel ran. Off by default: on a first run the dedupe store is empty, so the bot would otherwise reply to the entire open inbox at once."
           }
         },
         "required": [

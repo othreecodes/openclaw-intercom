@@ -47,6 +47,8 @@ export interface IntercomDedupeOptions {
 export class IntercomDedupeStore {
   private conversations = new Map<string, { ids: string[]; set: Set<string>; seen: number }>();
   private journalCount = 0;
+  /** True when no persisted state existed at construction: a first-ever run. */
+  readonly isFresh: boolean;
   private readonly journalFile: string;
   private readonly ttlMs: number;
   private readonly compactThreshold: number;
@@ -59,6 +61,7 @@ export class IntercomDedupeStore {
     this.journalFile = `${stateFile}.journal`;
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
     this.compactThreshold = options.compactThreshold ?? DEFAULT_COMPACT_THRESHOLD;
+    this.isFresh = !fs.existsSync(stateFile) && !fs.existsSync(this.journalFile);
     this.load();
   }
 
