@@ -52,5 +52,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // entry.test.ts loads the real SDK module graph and takes a few seconds;
+    // under parallel load that can brush the 5s default and flake.
+    testTimeout: 20_000,
   },
 });

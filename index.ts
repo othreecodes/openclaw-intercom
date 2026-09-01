@@ -29,7 +29,9 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
   const account = resolveIntercomAccount(api.config, null);
   if (!account.enabled || !account.configured) return;
 
-  const client = new IntercomClient(account.token, account.apiVersion);
+  const client = new IntercomClient(account.token, account.apiVersion, undefined, {
+    rateLimitPerMinute: account.rateLimitPerMinute,
+  });
   const adminId = account.adminId ?? (await client.me()).id;
   if (!adminId) throw new Error("intercom: could not resolve adminId from GET /me");
 
