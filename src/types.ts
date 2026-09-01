@@ -34,6 +34,8 @@ export interface IntercomChannelConfig {
    * Each conversation is still driven to completion (reply, notes, tags, then
    * close or escalate) before that worker picks up another. Defaults to 10. */
   maxConcurrentConversations?: number;
+  /** Ceiling on outbound Intercom API requests per minute. Defaults to 500. */
+  rateLimitPerMinute?: number;
 }
 
 export interface ResolvedIntercomAccount {
@@ -55,6 +57,7 @@ export interface ResolvedIntercomAccount {
   contactContext: boolean;
   persona: string;
   maxConcurrentConversations: number;
+  rateLimitPerMinute: number;
 }
 
 export interface IntercomAdmin {

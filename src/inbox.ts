@@ -190,6 +190,8 @@ export class IntercomInbox {
 
   /** Conversations currently being worked on, so no two workers touch one. */
   private readonly inFlight = new Set<string>();
+  /** Last updated_at we have fully ingested, per conversation. */
+  private readonly lastIngestedUpdatedAt = new Map<string, number>();
 
   constructor(
     private readonly client: IntercomClient,
@@ -301,6 +303,7 @@ export class IntercomInbox {
     let dispatched = 0;
     let claimed = 0;
     let skipped = 0;
+    let unchanged = 0;
 
     // Work on several conversations at once, but finish each one — reply,
     // notes, tags, then close or escalate — before that worker starts another.
@@ -310,6 +313,21 @@ export class IntercomInbox {
 
     const runOne = async (entry: (typeof queue)[number]): Promise<void> => {
       const { conversation, unassigned: wasUnassigned } = entry;
+
+      // Search already told us when the conversation last changed. If that has
+      // not moved since we finished ingesting it, there is nothing new and the
+      // detail fetch would be wasted: at a short poll interval this is the
+      // single largest source of avoidable API calls.
+      const updatedAt = conversation.updated_at;
+      if (
+        typeof updatedAt === "number" &&
+        this.lastIngestedUpdatedAt.get(conversation.id) === updatedAt &&
+        !(this.pickupUnassigned && wasUnassigned)
+      ) {
+        unchanged += 1;
+        return;
+      }
+
       const outcome = await this.withConversationLock(conversation.id, async () => {
         const full = await this.client.getConversation(conversation.id);
         // Claim unassigned conversations so the bot owns follow-up and they move
@@ -322,7 +340,15 @@ export class IntercomInbox {
             this.logger.warn(`intercom: failed to claim conversation ${full.id}: ${String(err)}`);
           }
         }
-        return this.ingestConversation(full);
+        const count = await this.ingestConversation(full);
+        // Recorded only once ingest returns, so a failed fetch or ingest is
+        // retried on the next tick. Note that dispatch() swallows and logs a
+        // failing agent turn, and the part is already marked in the dedupe
+        // store before dispatch to prevent double replies, so an agent-side
+        // failure is not retried here either. That is pre-existing behaviour.
+        const seenAt = full.updated_at ?? updatedAt;
+        if (typeof seenAt === "number") this.lastIngestedUpdatedAt.set(conversation.id, seenAt);
+        return count;
       });
       if (outcome === false) skipped += 1;
       else dispatched += outcome;
@@ -346,9 +372,18 @@ export class IntercomInbox {
 
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
+    // Keep the watermark map bounded to what the inbox still holds open. A
+    // conversation that closes and reopens gets a new updated_at, so dropping
+    // it here cannot cause a missed message.
+    if (this.lastIngestedUpdatedAt.size > byId.size) {
+      for (const id of this.lastIngestedUpdatedAt.keys()) {
+        if (!byId.has(id)) this.lastIngestedUpdatedAt.delete(id);
+      }
+    }
+
     if (dispatched > 0 || claimed > 0) {
       this.logger.info(
-        `intercom: poll scanned ${byId.size} conversation(s) (${assigned.length} assigned, ${unassigned.length} unassigned) with ${workerCount} worker(s); dispatched ${dispatched} message(s), claimed ${claimed}${skipped > 0 ? `, skipped ${skipped} already in flight` : ""}`,
+        `intercom: poll scanned ${byId.size} conversation(s) (${assigned.length} assigned, ${unassigned.length} unassigned) with ${workerCount} worker(s); dispatched ${dispatched} message(s), claimed ${claimed}${skipped > 0 ? `, skipped ${skipped} already in flight` : ""}${unchanged > 0 ? `, ${unchanged} unchanged` : ""}`,
       );
     }
   }

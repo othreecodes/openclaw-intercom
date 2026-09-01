@@ -120,7 +120,8 @@ A fuller example with every option set:
       "createMissingTags": true,
       "contactContext": true,
       "persona": "You are Ocean from Cowrywise Support — warm, direct, and professional.",
-      "maxConcurrentConversations": 10
+      "maxConcurrentConversations": 10,
+      "rateLimitPerMinute": 500
     }
   }
 }
@@ -144,6 +145,7 @@ A fuller example with every option set:
 | `contactContext` | boolean | `true` | Fetch the customer's contact profile and give it to the agent as reply context. |
 | `persona` | string | neutral support voice | Voice/identity the agent adopts when replying to customers. See [Support persona](#support-persona). |
 | `maxConcurrentConversations` | number | `10` | How many conversations the agent works on at once. Each one is finished before that worker starts another. See [Throughput](#throughput). |
+| `rateLimitPerMinute` | number | `500` | Ceiling on outbound Intercom API requests per minute. See [Throughput](#throughput). |
 
 #### Throughput
 
@@ -165,6 +167,27 @@ Two things to size against:
   turn.
 - `agents.defaults.maxConcurrent` in your OpenClaw config, which caps concurrent
   agent runs gateway-wide. If it is lower than this setting, it is the real limit.
+
+##### Staying inside Intercom's rate limit
+
+`rateLimitPerMinute` (default `500`) is a token bucket over every outbound call,
+retries included. Concurrency multiplies request rate, so this is the ceiling
+that keeps that from turning into a wall of 429s. Check the limit on your
+Intercom plan and set it below that.
+
+Requests are retried up to 4 times on `429`, `408` and 5xx, and on network
+failures, using exponential backoff with full jitter. A `Retry-After` header is
+honoured when Intercom sends one. Other 4xx responses fail immediately.
+
+The plugin also avoids work it does not need to do:
+
+- A conversation is only fetched in full when the `updated_at` returned by
+  search has moved since it was last ingested. At a short poll interval this is
+  the largest single saving.
+- The workspace tag list is cached for 5 minutes and concurrent callers share
+  one fetch, instead of listing tags on every tagged reply.
+
+Both are transparent: nothing is skipped that could contain a new message.
 
 #### Support persona
 

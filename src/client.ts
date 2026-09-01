@@ -1,7 +1,32 @@
 import type { IntercomAdmin, IntercomContact, IntercomConversation, IntercomTag } from "./types.js";
 
+import { TokenBucket } from "./rate-limiter.js";
+
 const BASE_URL = "https://api.intercom.io";
 const MAX_RETRY_AFTER_SECONDS = 60;
+/** Requests per minute allowed by default. Conservative; tune per workspace plan. */
+const DEFAULT_RATE_LIMIT_PER_MINUTE = 500;
+/** Attempts for a retryable failure, including the first try. */
+const DEFAULT_MAX_ATTEMPTS = 4;
+/** Workspace tags change rarely; a short cache removes a fetch per tagged reply. */
+const DEFAULT_TAG_CACHE_TTL_MS = 5 * 60_000;
+const BASE_BACKOFF_MS = 500;
+const MAX_BACKOFF_MS = 30_000;
+/** Transient server-side failures worth retrying. */
+const RETRYABLE_STATUSES = new Set([408, 500, 502, 503, 504]);
+
+export interface IntercomClientOptions {
+  /** Outbound request ceiling per minute. Default 500. */
+  rateLimitPerMinute?: number;
+  /** Attempts for a retryable failure, including the first. Default 4. */
+  maxAttempts?: number;
+  /** How long the workspace tag list stays cached. Default 5 minutes. */
+  tagCacheTtlMs?: number;
+  /** Injectable sleep, for tests. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injectable jitter in [0,1), for tests. */
+  random?: () => number;
+}
 /** Intercom's maximum page size for the search API. */
 const SEARCH_PAGE_SIZE = 150;
 /** Safety stop so one tick cannot page forever. 150 * 40 = 6000 conversations. */
@@ -29,38 +54,85 @@ export class IntercomApiError extends Error {
 }
 
 export class IntercomClient {
+  private readonly limiter: TokenBucket;
+  private readonly maxAttempts: number;
+  private readonly tagCacheTtlMs: number;
+  private tagCache: { tags: IntercomTag[]; expiresAt: number } | null = null;
+  private tagFetch: Promise<IntercomTag[]> | null = null;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly random: () => number;
+
   constructor(
     private readonly token: string,
     private readonly apiVersion: string = "2.16",
     private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    options: IntercomClientOptions = {},
+  ) {
+    this.limiter = new TokenBucket(options.rateLimitPerMinute ?? DEFAULT_RATE_LIMIT_PER_MINUTE);
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+    this.tagCacheTtlMs = options.tagCacheTtlMs ?? DEFAULT_TAG_CACHE_TTL_MS;
+    this.sleep =
+      options.sleep ??
+      ((ms) =>
+        new Promise((resolve) => {
+          const timer = setTimeout(resolve, ms);
+          timer.unref?.();
+        }));
+    this.random = options.random ?? Math.random;
+  }
 
-  private async request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
-    const response = await this.fetchImpl(`${BASE_URL}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Intercom-Version": this.apiVersion,
-        Accept: "application/json",
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+  /** Exponential backoff with full jitter, honouring Retry-After when given. */
+  private backoffMs(attempt: number, retryAfterHeader: string | null): number {
+    const retryAfter = Number(retryAfterHeader ?? "");
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      return Math.min(retryAfter, MAX_RETRY_AFTER_SECONDS) * 1000;
+    }
+    const ceiling = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempt);
+    // Full jitter: spreads a thundering herd of workers retrying together.
+    return Math.floor(this.random() * ceiling);
+  }
 
-    if (response.status === 429 && !retried) {
-      const retryAfter = Number(response.headers.get("Retry-After") ?? "1");
-      const waitSeconds = Math.min(
-        Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 1,
-        MAX_RETRY_AFTER_SECONDS,
-      );
-      await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
-      return this.request<T>(method, path, body, true);
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
+      // Pace every attempt, retries included: a retry is another request.
+      await this.limiter.acquire();
+
+      let response: Response;
+      try {
+        response = await this.fetchImpl(`${BASE_URL}${path}`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${this.token}`,
+            "Intercom-Version": this.apiVersion,
+            Accept: "application/json",
+            ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          },
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+      } catch (err) {
+        // Network-level failure (DNS, reset, timeout): retryable.
+        lastError = err;
+        if (attempt + 1 >= this.maxAttempts) break;
+        await this.sleep(this.backoffMs(attempt, null));
+        continue;
+      }
+
+      if (response.ok) return (await response.json()) as T;
+
+      const retryable = response.status === 429 || RETRYABLE_STATUSES.has(response.status);
+      if (!retryable || attempt + 1 >= this.maxAttempts) {
+        throw new IntercomApiError(response.status, await response.text(), path);
+      }
+
+      lastError = new IntercomApiError(response.status, "", path);
+      await this.sleep(this.backoffMs(attempt, response.headers.get("Retry-After")));
     }
 
-    if (!response.ok) {
-      throw new IntercomApiError(response.status, await response.text(), path);
-    }
-    return (await response.json()) as T;
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(`Intercom request failed after ${this.maxAttempts} attempts on ${path}`);
   }
 
   me(): Promise<IntercomAdmin> {
@@ -175,13 +247,37 @@ export class IntercomClient {
 
   /** List all workspace tags (id + name). */
   async listTags(): Promise<IntercomTag[]> {
-    const data = await this.request<{ data?: IntercomTag[] }>("GET", "/tags");
-    return data.data ?? [];
+    const cached = this.tagCache;
+    if (cached && Date.now() < cached.expiresAt) return cached.tags;
+
+    // Coalesce: several workers replying at once should share one fetch.
+    if (!this.tagFetch) {
+      this.tagFetch = this.request<{ data?: IntercomTag[] }>("GET", "/tags")
+        .then((data) => {
+          const tags = data.data ?? [];
+          this.tagCache = { tags, expiresAt: Date.now() + this.tagCacheTtlMs };
+          return tags;
+        })
+        .finally(() => {
+          this.tagFetch = null;
+        });
+    }
+    return this.tagFetch;
+  }
+
+  /** Drop the cached tag list, e.g. after creating a tag. */
+  invalidateTagCache(): void {
+    this.tagCache = null;
   }
 
   /** Create a tag by name, returning it (Intercom is idempotent on name). */
-  createTag(name: string): Promise<IntercomTag> {
-    return this.request<IntercomTag>("POST", "/tags", { name });
+  async createTag(name: string): Promise<IntercomTag> {
+    const tag = await this.request<IntercomTag>("POST", "/tags", { name });
+    // Keep the cache coherent rather than waiting for the ttl.
+    if (this.tagCache && !this.tagCache.tags.some((t) => t.id === tag.id)) {
+      this.tagCache.tags = [...this.tagCache.tags, tag];
+    }
+    return tag;
   }
 
   /** Attach a tag (by id) to a conversation, as the acting admin. */
