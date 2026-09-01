@@ -2,6 +2,20 @@ import type { IntercomAdmin, IntercomContact, IntercomConversation, IntercomTag 
 
 const BASE_URL = "https://api.intercom.io";
 const MAX_RETRY_AFTER_SECONDS = 60;
+/** Intercom's maximum page size for the search API. */
+const SEARCH_PAGE_SIZE = 150;
+/** Safety stop so one tick cannot page forever. 150 * 40 = 6000 conversations. */
+const MAX_SEARCH_PAGES = 40;
+
+export interface SearchOptions {
+  perPage?: number;
+  maxPages?: number;
+}
+
+interface IntercomSearchResponse {
+  conversations?: IntercomConversation[];
+  pages?: { next?: { starting_after?: string } | string };
+}
 
 export class IntercomApiError extends Error {
   constructor(
@@ -53,43 +67,67 @@ export class IntercomClient {
     return this.request<IntercomAdmin>("GET", "/me");
   }
 
-  async searchAssignedConversations(adminId: string): Promise<IntercomConversation[]> {
-    const data = await this.request<{ conversations?: IntercomConversation[] }>(
-      "POST",
-      "/conversations/search",
-      {
-        query: {
-          operator: "AND",
-          value: [
-            { field: "admin_assignee_id", operator: "=", value: adminId },
-            { field: "open", operator: "=", value: true },
-          ],
-        },
+  /**
+   * Page through /conversations/search until the results run out.
+   *
+   * Intercom returns a cursor in pages.next.starting_after. Without following
+   * it we only ever saw the first page, so any backlog past one page was
+   * invisible: results are sorted updated_at desc, so the customers waiting
+   * longest are exactly the ones that fall off the end.
+   *
+   * maxPages is a safety stop so a pathological inbox cannot spin forever in
+   * one tick; hitting it is logged by the caller through the returned count.
+   */
+  private async searchAll(
+    value: unknown[],
+    { perPage = SEARCH_PAGE_SIZE, maxPages = MAX_SEARCH_PAGES }: SearchOptions = {},
+  ): Promise<IntercomConversation[]> {
+    const all: IntercomConversation[] = [];
+    let startingAfter: string | undefined;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const body: Record<string, unknown> = {
+        query: { operator: "AND", value },
         sort_by: "updated_at",
         sort_order: "desc",
-      },
+        pagination: startingAfter
+          ? { per_page: perPage, starting_after: startingAfter }
+          : { per_page: perPage },
+      };
+      const data = await this.request<IntercomSearchResponse>("POST", "/conversations/search", body);
+      const batch = data.conversations ?? [];
+      all.push(...batch);
+
+      const next = data.pages?.next;
+      // Intercom has returned next as both an object and a bare cursor string.
+      startingAfter = typeof next === "string" ? next : next?.starting_after;
+      if (!startingAfter || batch.length === 0) break;
+    }
+    return all;
+  }
+
+  searchAssignedConversations(
+    adminId: string,
+    options?: SearchOptions,
+  ): Promise<IntercomConversation[]> {
+    return this.searchAll(
+      [
+        { field: "admin_assignee_id", operator: "=", value: adminId },
+        { field: "open", operator: "=", value: true },
+      ],
+      options,
     );
-    return data.conversations ?? [];
   }
 
   /** Open conversations that are not assigned to any admin (assignee id 0). */
-  async searchUnassignedConversations(): Promise<IntercomConversation[]> {
-    const data = await this.request<{ conversations?: IntercomConversation[] }>(
-      "POST",
-      "/conversations/search",
-      {
-        query: {
-          operator: "AND",
-          value: [
-            { field: "admin_assignee_id", operator: "=", value: 0 },
-            { field: "open", operator: "=", value: true },
-          ],
-        },
-        sort_by: "updated_at",
-        sort_order: "desc",
-      },
+  searchUnassignedConversations(options?: SearchOptions): Promise<IntercomConversation[]> {
+    return this.searchAll(
+      [
+        { field: "admin_assignee_id", operator: "=", value: 0 },
+        { field: "open", operator: "=", value: true },
+      ],
+      options,
     );
-    return data.conversations ?? [];
   }
 
   /** Assign a conversation to the bot admin so it owns follow-up. */
