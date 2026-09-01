@@ -208,6 +208,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     dispatchMessage,
     api.logger,
     account.pickupUnassigned,
+    account.maxConcurrentConversations,
   );
   registerIntercomInbox(account.accountId, inbox);
 

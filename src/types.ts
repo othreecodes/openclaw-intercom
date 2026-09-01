@@ -30,6 +30,10 @@ export interface IntercomChannelConfig {
    * text injected into the per-message framing (e.g. who it is and how to sound).
    * Falls back to a neutral, professional support persona when unset. */
   persona?: string;
+  /** How many conversations the agent may work on at the same time.
+   * Each conversation is still driven to completion (reply, notes, tags, then
+   * close or escalate) before that worker picks up another. Defaults to 10. */
+  maxConcurrentConversations?: number;
 }
 
 export interface ResolvedIntercomAccount {
@@ -50,6 +54,7 @@ export interface ResolvedIntercomAccount {
   createMissingTags: boolean;
   contactContext: boolean;
   persona: string;
+  maxConcurrentConversations: number;
 }
 
 export interface IntercomAdmin {
