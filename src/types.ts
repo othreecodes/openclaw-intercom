@@ -26,6 +26,10 @@ export interface IntercomChannelConfig {
   createMissingTags?: boolean;
   /** Fetch the customer's contact profile and give it to the agent as context. Defaults to true. */
   contactContext?: boolean;
+  /** Voice/identity the agent adopts when replying to Intercom customers. Free-form
+   * text injected into the per-message framing (e.g. who it is and how to sound).
+   * Falls back to a neutral, professional support persona when unset. */
+  persona?: string;
 }
 
 export interface ResolvedIntercomAccount {
@@ -45,6 +49,7 @@ export interface ResolvedIntercomAccount {
   escalationAssigneeType: "admin" | "team";
   createMissingTags: boolean;
   contactContext: boolean;
+  persona: string;
 }
 
 export interface IntercomAdmin {

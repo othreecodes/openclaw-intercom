@@ -77,11 +77,12 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       }
     }
 
-    // The agent reads bodyForAgent; frame who it's talking to (so it never
-    // assumes the sender is David) and what inline actions it can take.
+    // The agent reads bodyForAgent; the persona (configurable) sets the voice,
+    // then we pin who it's talking to (so it never assumes the sender is David)
+    // and what inline actions it can take.
     const bodyForAgent =
-      `[Intercom support chat — you are the support agent. The customer is ${customerLabel}.${profileLine} ` +
-      `Reply to them as a customer; do not assume they are David or anyone on your own team, and address them by their own name (or neutrally if unnamed). ` +
+      `[Intercom support chat. ${account.persona} The customer is ${customerLabel}.${profileLine} ` +
+      `Do not assume the customer is David or anyone on your own team; address them by their own name (or neutrally if unnamed). ` +
       `Inline actions (put each on its own line, they are stripped before the customer sees them): ` +
       `[[close]] when the issue is fully resolved (never on the first message or while anything is open); ` +
       `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; ` +

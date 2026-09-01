@@ -79,6 +79,10 @@
             "type": "boolean",
             "default": true,
             "description": "Fetch the customer's Intercom contact profile and give it to the agent as reply context"
+          },
+          "persona": {
+            "type": "string",
+            "description": "Voice/identity the agent adopts when replying to customers (e.g. 'You are Ocean from Cowrywise Support — warm, direct, professional.'). Defaults to a neutral, professional support persona when unset."
           }
         },
         "required": ["token"]
