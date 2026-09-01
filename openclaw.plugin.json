@@ -106,6 +106,21 @@
             "minimum": 1,
             "default": 500,
             "description": "Ceiling on outbound Intercom API requests per minute, retries included. Set below your workspace plan's limit."
+          },
+          "healthMonitor": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "intervalSeconds": {
+                "type": "number",
+                "minimum": 1
+              }
+            },
+            "description": "Core channel health monitoring. Disable for webhook-only inbound: the channel holds no long-lived connection, so the monitor reads it as stopped and restarts it in a loop, draining in-flight work."
           }
         },
         "required": [
