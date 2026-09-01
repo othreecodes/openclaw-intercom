@@ -6,7 +6,14 @@ import { intercomChannel } from "./src/channel.js";
 import { IntercomClient } from "./src/client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./src/config.js";
 import { IntercomDedupeStore } from "./src/dedupe.js";
-import { IntercomInbox, type InboundIntercomMessage } from "./src/inbox.js";
+import {
+  applyConversationTags,
+  IntercomInbox,
+  isResolutionPhrase,
+  parseDirectives,
+  summarizeContact,
+  type InboundIntercomMessage,
+} from "./src/inbox.js";
 import { registerIntercomInbox, unregisterIntercomInbox } from "./src/runtime-state.js";
 import type { ResolvedIntercomAccount } from "./src/types.js";
 import { createIntercomWebhookHandler } from "./src/webhook.js";
@@ -39,6 +46,48 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       );
       return;
     }
+    // Identify the customer for the agent. Named users get their name (+ email);
+    // anonymous widget leads have neither, so say so explicitly — otherwise the
+    // routed agent falls back to its own persona and misaddresses the customer.
+    const customerName = message.authorName?.trim();
+    const customerEmail = message.authorEmail?.trim();
+    const customerLabel = customerName
+      ? customerEmail
+        ? `${customerName} <${customerEmail}>`
+        : customerName
+      : customerEmail
+        ? `Intercom visitor <${customerEmail}>`
+        : "an anonymous Intercom visitor (no name on file)";
+    const conversationLabel = customerName
+      ? `${customerName} (Intercom)`
+      : customerEmail
+        ? `${customerEmail} (Intercom)`
+        : `Intercom visitor ${message.conversationId}`;
+
+    // #4 Contact context: give the agent the customer's profile before it replies.
+    let profileLine = "";
+    if (account.contactContext && message.authorId) {
+      try {
+        const summary = summarizeContact(await client.getContact(message.authorId));
+        if (summary) profileLine = ` Known profile — ${summary}.`;
+      } catch (err) {
+        api.logger.warn(
+          `intercom: contact lookup failed for ${message.authorId}: ${String(err)}`,
+        );
+      }
+    }
+
+    // The agent reads bodyForAgent; frame who it's talking to (so it never
+    // assumes the sender is David) and what inline actions it can take.
+    const bodyForAgent =
+      `[Intercom support chat — you are the support agent. The customer is ${customerLabel}.${profileLine} ` +
+      `Reply to them as a customer; do not assume they are David or anyone on your own team, and address them by their own name (or neutrally if unnamed). ` +
+      `Inline actions (put each on its own line, they are stripped before the customer sees them): ` +
+      `[[close]] when the issue is fully resolved (never on the first message or while anything is open); ` +
+      `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; ` +
+      `[[note: text]] to leave a private internal note; ` +
+      `[[tag: label1, label2]] to tag the conversation for triage.]` +
+      `\n\n${message.body}`;
     await dispatchInboundDirectDmWithRuntime({
       runtime: api.runtime,
       cfg: api.config,
@@ -51,23 +100,94 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       senderId: message.authorId,
       senderAddress: `intercom:${message.conversationId}`,
       recipientAddress: `intercom:${adminId}`,
-      conversationLabel: message.authorName
-        ? `Intercom: ${message.authorName}`
-        : `Intercom conversation ${message.conversationId}`,
+      conversationLabel,
       rawBody: message.body,
+      bodyForAgent,
       messageId: message.partId,
       timestamp: message.createdAt ? message.createdAt * 1000 : Date.now(),
       inboundAccessAuthorized: true,
       deliver: async (payload) => {
-        const text = payload.text?.trim();
-        if (!text) return;
-        const conversation = await client.reply(message.conversationId, adminId, text);
-        const parts = conversation.conversation_parts?.conversation_parts ?? [];
-        for (let i = parts.length - 1; i >= 0; i -= 1) {
-          const part = parts[i];
-          if (part.author?.type === "admin" && part.id) {
-            inbox.markOwnPart(message.conversationId, part.id);
-            break;
+        const raw = payload.text?.trim();
+        const { text, close: modelClose, escalate, escalateReason, notes, tags } = raw
+          ? parseDirectives(raw)
+          : { text: "", close: false, escalate: false, escalateReason: undefined, notes: [], tags: [] };
+        const convId = message.conversationId;
+
+        // Public reply to the customer.
+        if (text) {
+          const conversation = await client.reply(convId, adminId, text);
+          const parts = conversation.conversation_parts?.conversation_parts ?? [];
+          for (let i = parts.length - 1; i >= 0; i -= 1) {
+            const part = parts[i];
+            if (part.author?.type === "admin" && part.id) {
+              inbox.markOwnPart(convId, part.id);
+              break;
+            }
+          }
+        }
+
+        // #2 Private internal notes (never shown to the customer).
+        for (const noteBody of notes) {
+          try {
+            await client.note(convId, adminId, noteBody);
+          } catch (err) {
+            api.logger.warn(`intercom: failed to add note on ${convId}: ${String(err)}`);
+          }
+        }
+
+        // #3 Tagging (resolve names -> ids, creating when allowed).
+        if (tags.length > 0) {
+          try {
+            const applied = await applyConversationTags(
+              client,
+              convId,
+              adminId,
+              tags,
+              account.createMissingTags,
+            );
+            if (applied.length > 0) {
+              api.logger.info(`intercom: tagged ${convId} with ${applied.join(", ")}`);
+            }
+          } catch (err) {
+            api.logger.warn(`intercom: failed to tag ${convId}: ${String(err)}`);
+          }
+        }
+
+        // #1 Escalate / hand off to a human teammate or team.
+        if (escalate) {
+          if (account.escalationAssigneeId) {
+            try {
+              if (escalateReason) {
+                await client.note(convId, adminId, `Escalation: ${escalateReason}`);
+              }
+              await client.assignTo(
+                convId,
+                adminId,
+                account.escalationAssigneeId,
+                account.escalationAssigneeType,
+              );
+              api.logger.info(
+                `intercom: escalated ${convId} to ${account.escalationAssigneeType} ${account.escalationAssigneeId}`,
+              );
+            } catch (err) {
+              api.logger.warn(`intercom: failed to escalate ${convId}: ${String(err)}`);
+            }
+          } else {
+            api.logger.warn(
+              `intercom: agent requested escalation on ${convId} but channels.intercom.escalationAssigneeId is not set`,
+            );
+          }
+        }
+
+        // Close — but not if we just escalated (a human still needs it open).
+        if (!escalate && account.autoClose && (modelClose || isResolutionPhrase(message.body))) {
+          try {
+            await client.close(convId, adminId);
+            api.logger.info(
+              `intercom: closed conversation ${convId} (${modelClose ? "model" : "customer-resolved"})`,
+            );
+          } catch (err) {
+            api.logger.warn(`intercom: failed to close conversation ${convId}: ${String(err)}`);
           }
         }
       },
@@ -80,7 +200,14 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     });
   };
 
-  const inbox = new IntercomInbox(client, adminId, dedupe, dispatchMessage, api.logger);
+  const inbox = new IntercomInbox(
+    client,
+    adminId,
+    dedupe,
+    dispatchMessage,
+    api.logger,
+    account.pickupUnassigned,
+  );
   registerIntercomInbox(account.accountId, inbox);
 
   if (account.inbound === "poll" || account.inbound === "both") {

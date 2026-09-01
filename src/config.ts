@@ -31,5 +31,11 @@ export function resolveIntercomAccount(
     webhookSecret: section.webhookSecret || undefined,
     apiVersion: section.apiVersion || DEFAULT_API_VERSION,
     allowFrom: Array.isArray(section.allowFrom) ? section.allowFrom : undefined,
+    pickupUnassigned: section.pickupUnassigned !== false,
+    autoClose: section.autoClose !== false,
+    escalationAssigneeId: section.escalationAssigneeId || undefined,
+    escalationAssigneeType: section.escalationAssigneeType === "team" ? "team" : "admin",
+    createMissingTags: section.createMissingTags !== false,
+    contactContext: section.contactContext !== false,
   };
 }
