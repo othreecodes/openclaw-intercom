@@ -1,0 +1,52 @@
+{
+  "id": "intercom",
+  "channels": [
+    "intercom"
+  ],
+  "channelConfigs": {
+    "intercom": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "uiHints": {
+              "sensitive": true
+            }
+          },
+          "adminId": {
+            "type": "string",
+            "description": "Optional bot admin ID (auto-resolved if omitted)"
+          },
+          "pollIntervalSeconds": {
+            "type": "number",
+            "default": 20
+          },
+          "apiVersion": {
+            "type": "string",
+            "default": "2.16"
+          },
+          "inbound": {
+            "type": "string",
+            "enum": [
+              "poll",
+              "webhook",
+              "both"
+            ],
+            "default": "poll"
+          },
+          "webhookSecret": {
+            "type": "string",
+            "uiHints": {
+              "sensitive": true
+            },
+            "description": "Intercom App Client Secret used to verify X-Hub-Signature"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      }
+    }
+  }
+}
