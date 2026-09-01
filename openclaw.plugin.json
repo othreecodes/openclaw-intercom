@@ -2,7 +2,9 @@
   "id": "intercom",
   "name": "Intercom",
   "description": "Intercom support channel plugin (polling + webhook inbound, auto-reply)",
-  "channels": ["intercom"],
+  "channels": [
+    "intercom"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -27,7 +29,11 @@
           },
           "inbound": {
             "type": "string",
-            "enum": ["poll", "webhook", "both"],
+            "enum": [
+              "poll",
+              "webhook",
+              "both"
+            ],
             "default": "poll",
             "description": "Inbound delivery mode"
           },
@@ -47,7 +53,9 @@
           },
           "allowFrom": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Optional allowlist of Intercom contact ids"
           },
           "pickupUnassigned": {
@@ -66,7 +74,10 @@
           },
           "escalationAssigneeType": {
             "type": "string",
-            "enum": ["admin", "team"],
+            "enum": [
+              "admin",
+              "team"
+            ],
             "default": "admin",
             "description": "Whether escalationAssigneeId refers to a teammate (admin) or a team"
           },
@@ -82,10 +93,24 @@
           },
           "persona": {
             "type": "string",
-            "description": "Voice/identity the agent adopts when replying to customers (e.g. 'You are Ocean from Cowrywise Support — warm, direct, professional.'). Defaults to a neutral, professional support persona when unset."
+            "description": "Voice/identity the agent adopts when replying to customers (e.g. 'You are Ocean from Cowrywise Support \u2014 warm, direct, professional.'). Defaults to a neutral, professional support persona when unset."
+          },
+          "maxConcurrentConversations": {
+            "type": "number",
+            "minimum": 1,
+            "default": 10,
+            "description": "How many conversations the agent works on at once. Each conversation is finished (reply, notes, tags, then close or escalate) before that worker starts another."
+          },
+          "rateLimitPerMinute": {
+            "type": "number",
+            "minimum": 1,
+            "default": 500,
+            "description": "Ceiling on outbound Intercom API requests per minute, retries included. Set below your workspace plan's limit."
           }
         },
-        "required": ["token"]
+        "required": [
+          "token"
+        ]
       },
       "uiHints": {
         "token": {
