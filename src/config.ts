@@ -57,5 +57,6 @@ export function resolveIntercomAccount(
     persona: (typeof section.persona === "string" && section.persona.trim()) || DEFAULT_PERSONA,
     maxConcurrentConversations,
     rateLimitPerMinute,
+    replyToExistingOnStart: section.replyToExistingOnStart === true,
   };
 }

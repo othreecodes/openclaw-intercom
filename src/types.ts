@@ -36,6 +36,9 @@ export interface IntercomChannelConfig {
   maxConcurrentConversations?: number;
   /** Ceiling on outbound Intercom API requests per minute. Defaults to 500. */
   rateLimitPerMinute?: number;
+  /** Answer conversations that already existed the first time this channel ran.
+   * Defaults to false: otherwise a first run replies to the whole open inbox. */
+  replyToExistingOnStart?: boolean;
 }
 
 export interface ResolvedIntercomAccount {
@@ -58,6 +61,7 @@ export interface ResolvedIntercomAccount {
   persona: string;
   maxConcurrentConversations: number;
   rateLimitPerMinute: number;
+  replyToExistingOnStart: boolean;
 }
 
 export interface IntercomAdmin {
