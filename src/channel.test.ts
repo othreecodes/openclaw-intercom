@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { findLatestAdminPartId, intercomChannel, stripIntercomTargetPrefix } from "./channel.js";
 import { IntercomClient } from "./client.js";
-import { resolveIntercomAccount } from "./config.js";
+import { DEFAULT_PERSONA, resolveIntercomAccount } from "./config.js";
 import { IntercomDedupeStore } from "./dedupe.js";
 import {
   applyConversationTags,
@@ -83,6 +83,26 @@ describe("config resolution", () => {
     expect(account.inbound).toBe("both");
     expect(account.pollIntervalSeconds).toBe(5);
     expect(account.apiVersion).toBe("2.15");
+  });
+
+  it("defaults persona to the neutral professional support voice", () => {
+    const cfg = { channels: { intercom: { token: "tok" } } } as any;
+    const account = resolveIntercomAccount(cfg, null);
+    expect(account.persona).toBe(DEFAULT_PERSONA);
+  });
+
+  it("honors a custom persona and trims it", () => {
+    const cfg = {
+      channels: { intercom: { token: "tok", persona: "  You are Ocean from Support.  " } },
+    } as any;
+    const account = resolveIntercomAccount(cfg, null);
+    expect(account.persona).toBe("You are Ocean from Support.");
+  });
+
+  it("falls back to the default persona when blank", () => {
+    const cfg = { channels: { intercom: { token: "tok", persona: "   " } } } as any;
+    const account = resolveIntercomAccount(cfg, null);
+    expect(account.persona).toBe(DEFAULT_PERSONA);
   });
 
   it("exposes the same resolution through the channel plugin config adapter", () => {

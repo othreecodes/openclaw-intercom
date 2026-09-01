@@ -118,7 +118,8 @@ A fuller example with every option set:
       "escalationAssigneeId": "HUMAN_TEAMMATE_OR_TEAM_ID",
       "escalationAssigneeType": "admin",
       "createMissingTags": true,
-      "contactContext": true
+      "contactContext": true,
+      "persona": "You are Ocean from Cowrywise Support — warm, direct, and professional."
     }
   }
 }
@@ -140,6 +141,24 @@ A fuller example with every option set:
 | `escalationAssigneeType` | `admin` \| `team` | `admin` | Whether `escalationAssigneeId` is a teammate or a team. |
 | `createMissingTags` | boolean | `true` | Create tags that don't exist yet when the agent emits `[[tag: ...]]`. |
 | `contactContext` | boolean | `true` | Fetch the customer's contact profile and give it to the agent as reply context. |
+| `persona` | string | neutral support voice | Voice/identity the agent adopts when replying to customers. See [Support persona](#support-persona). |
+
+#### Support persona
+
+By default the agent replies in a neutral, professional support voice — even if your
+OpenClaw agent normally has a strong personality, the plugin frames each ticket as a
+generic support agent so customers get a clean, on-brand reply.
+
+Set `persona` to give it a specific voice or identity. The string is injected verbatim into
+the per-message instructions, so write it as a direct instruction to the agent:
+
+```json
+{ "channels": { "intercom": { "persona": "You are Ocean from Cowrywise Support — warm, direct, and genuinely helpful. Keep it professional and concise; never crude or overly casual." } } }
+```
+
+Regardless of `persona`, the plugin always pins the customer's real identity (so the agent
+never mistakes the customer for you) and appends the available inline actions — you're only
+customizing the voice, not the guardrails.
 
 ### 4. Set up webhooks (only for `inbound: "webhook"` or `"both"`)
 
