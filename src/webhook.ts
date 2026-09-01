@@ -82,7 +82,9 @@ export function createIntercomWebhookHandler(params: {
     const item = payload.data?.item;
     if (HANDLED_TOPICS.has(topic) && item?.id) {
       // Ack fast; ingest shares the poll path's dedupe so "both" mode never double-answers.
-      void inbox.ingestConversation(item).catch((err) => {
+      // Use the same per-conversation gate the poll loop uses, so a webhook
+      // delivery and a concurrent poll never drive one conversation at once.
+      void inbox.withConversationLock(item.id, () => inbox.ingestConversation(item)).catch((err) => {
         logger.error(`intercom webhook: ingest failed for conversation ${item.id}: ${String(err)}`);
       });
     }
