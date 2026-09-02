@@ -1,6 +1,25 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { IntercomClient } from "./client.js";
 import type { IntercomDedupeStore } from "./dedupe.js";
 import type { IntercomContact, IntercomConversation } from "./types.js";
+
+/**
+ * Async context captured at module load, before the Gateway enters any
+ * root-work admission scope.
+ *
+ * The poll interval and the webhook route are both created during plugin init,
+ * which runs inside a Gateway root-work admission. Timers and handlers created
+ * there inherit that AsyncLocalStorage store, and once the admission is
+ * released every later dispatch is refused:
+ *
+ *   isGatewaySubordinateWorkAdmissionClosed() -> store.released === true
+ *   -> GatewayDrainingError: Gateway is draining; new tasks are not accepted
+ *
+ * The channel then never answers anything, in any inbound mode, for the life of
+ * the process. Running each dispatch in this clean snapshot detaches it from the
+ * stale admission so the Gateway admits the work on its own merits.
+ */
+const detachedFromStartupAdmission = AsyncLocalStorage.snapshot();
 
 export interface InboundIntercomMessage {
   conversationId: string;
@@ -322,7 +341,7 @@ export class IntercomInbox {
   private async dispatch(message: InboundIntercomMessage): Promise<void> {
     if (!message.body) return;
     try {
-      await this.onMessage(message);
+      await detachedFromStartupAdmission(() => this.onMessage(message));
     } catch (err) {
       this.logger.error(
         `intercom: failed to dispatch part ${message.partId} of conversation ${message.conversationId}: ${String(err)}`,
