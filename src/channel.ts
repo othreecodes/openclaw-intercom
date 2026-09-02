@@ -88,6 +88,34 @@ export const intercomChannel = createChatChannelPlugin<ResolvedIntercomAccount>(
     }),
     config: intercomConfigAdapter,
     capabilities: { chatTypes: ["direct"] },
+    /**
+     * Report whether the channel is actually live.
+     *
+     * Without this the Gateway never sees the channel leave "stopped", and it
+     * refuses to admit that channel's tasks: every inbound message fails with
+     * GatewayDrainingError once the health monitor's startup grace expires,
+     * roughly a minute after boot. `channels.start` cannot help, because a
+     * channel with no status adapter reports "does not support start".
+     *
+     * The inbox is registered in runtime-state once polling and/or the webhook
+     * route are wired up, and unregistered on cleanup, so its presence is the
+     * liveness signal.
+     */
+    status: {
+      buildAccountSnapshot: ({ account, runtime }) => {
+        const live = Boolean(getIntercomInbox(account.accountId));
+        return {
+          ...(runtime ?? {}),
+          accountId: account.accountId ?? "default",
+          name: runtime?.name,
+          enabled: account.enabled,
+          configured: account.configured,
+          running: live,
+          connected: live,
+          statusState: live ? "running" : "stopped",
+        };
+      },
+    },
   },
   outbound: {
     base: { deliveryMode: "direct" },
