@@ -67,8 +67,18 @@ export const intercomChannel = createChatChannelPlugin<ResolvedIntercomAccount>(
       meta: {
         label: "Intercom",
         selectionLabel: "Intercom",
-        docsPath: "",
-        blurb: "Answer Intercom conversations assigned to a bot admin.",
+        detailLabel: "Intercom support inbox",
+        // SF Symbol shown on the channel card. Without one the Control UI
+        // falls back to the first two letters of the id ("IN").
+        systemImage: "questionmark.bubble",
+        // An empty docsPath makes the Gateway log the channel as having
+        // incomplete metadata and fill the field in itself.
+        docsPath: "https://github.com/othreecodes/openclaw-intercom#readme",
+        docsLabel: "Intercom plugin docs",
+        blurb:
+          "Answer Intercom conversations as a support teammate: polling or webhook inbound, " +
+          "auto-reply, and inline close, escalate, note and tag actions.",
+        aliases: ["intercom.io"],
       },
       config: intercomConfigAdapter,
       setup: {
