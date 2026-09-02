@@ -1,7 +1,7 @@
 {
   "id": "intercom",
   "name": "Intercom",
-  "description": "Intercom support channel plugin (polling + webhook inbound, auto-reply)",
+  "description": "OpenClaw channel plugin for Intercom. The agent works as a support teammate: receives conversations by polling or webhook and replies to customers via the Intercom API.",
   "channels": [
     "intercom"
   ],
