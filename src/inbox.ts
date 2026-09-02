@@ -201,7 +201,51 @@ export class IntercomInbox {
     private readonly logger: IntercomInboxLogger,
     private readonly pickupUnassigned: boolean = true,
     private readonly maxConcurrentConversations: number = 10,
-  ) {}
+    /**
+     * Answer conversations that already existed the first time this channel
+     * ever ran. Off by default: on a first run the dedupe store is empty, so
+     * every message in every open conversation looks new and the bot would
+     * reply to the entire backlog at once.
+     */
+    private readonly replyToExistingOnStart: boolean = false,
+    /** True when the dedupe store had no prior state: a first-ever run. */
+    private readonly coldStart: boolean = false,
+  ) {
+    // Only a cold start has a backlog to skip. Later restarts read persisted
+    // dedupe state, so anything genuinely new — including messages that
+    // arrived while the gateway was down — is still answered.
+    this.seedingBacklog = coldStart && !replyToExistingOnStart;
+  }
+
+  /** True until the first poll pass has absorbed the pre-existing inbox. */
+  private seedingBacklog = false;
+
+  /** Whether the next poll pass will seed rather than answer. */
+  get isSeedingBacklog(): boolean {
+    return this.seedingBacklog;
+  }
+
+  /**
+   * Record every customer message in a conversation as already handled,
+   * without dispatching any of it. Used once on a cold start so history is
+   * remembered but never answered.
+   */
+  seedConversation(conversation: IntercomConversation): number {
+    const conversationId = conversation.id;
+    if (!conversationId) return 0;
+    let seeded = 0;
+
+    const source = conversation.source;
+    if (isCustomerAuthor(source?.author?.type) && source?.body) {
+      const sourceId = source.id ? `source-${source.id}` : `source-${conversationId}`;
+      if (this.dedupe.markProcessed(conversationId, sourceId)) seeded += 1;
+    }
+    for (const part of conversation.conversation_parts?.conversation_parts ?? []) {
+      if (!isCustomerAuthor(part.author?.type) || !part.body || !part.id) continue;
+      if (this.dedupe.markProcessed(conversationId, part.id)) seeded += 1;
+    }
+    return seeded;
+  }
 
   /**
    * Run `work` for a conversation unless that conversation is already being
@@ -298,6 +342,22 @@ export class IntercomInbox {
     for (const c of assigned) byId.set(c.id, { conversation: c, unassigned: false });
     for (const c of unassigned) {
       if (!byId.has(c.id)) byId.set(c.id, { conversation: c, unassigned: true });
+    }
+
+    // First pass after a cold start: absorb the inbox that existed before this
+    // channel was ever installed. Record it as handled, answer none of it, and
+    // do not claim unassigned conversations we are not going to reply to.
+    if (this.seedingBacklog) {
+      let seeded = 0;
+      for (const { conversation } of byId.values()) {
+        seeded += this.seedConversation(await this.client.getConversation(conversation.id));
+      }
+      this.seedingBacklog = false;
+      this.logger.info(
+        `intercom: first run, absorbed ${byId.size} existing conversation(s) (${seeded} message(s)) without replying; ` +
+          "set channels.intercom.replyToExistingOnStart=true to answer the backlog instead",
+      );
+      return;
     }
 
     let dispatched = 0;

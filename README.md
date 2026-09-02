@@ -146,6 +146,31 @@ A fuller example with every option set:
 | `persona` | string | neutral support voice | Voice/identity the agent adopts when replying to customers. See [Support persona](#support-persona). |
 | `maxConcurrentConversations` | number | `10` | How many conversations the agent works on at once. Each one is finished before that worker starts another. See [Throughput](#throughput). |
 | `rateLimitPerMinute` | number | `500` | Ceiling on outbound Intercom API requests per minute. See [Throughput](#throughput). |
+| `replyToExistingOnStart` | boolean | `false` | Answer conversations that already existed the first time the channel ran. See [First run](#first-run). |
+
+#### First run
+
+The first time the channel starts, it has no record of what it has already seen. Every
+message in every open conversation therefore looks new. Left unchecked the bot answers your
+entire open inbox at once, which is exactly as bad as it sounds.
+
+So on a first run the plugin **absorbs** the existing inbox instead: it records every message
+already there as handled and replies to none of it, then logs
+
+```
+intercom: first run, absorbed 12 existing conversation(s) (35 message(s)) without replying
+```
+
+From the next message onward it behaves normally.
+
+This applies only to a genuine first run, detected by an empty dedupe store. Later restarts
+read the persisted state, so a message that arrived while the gateway was down is still
+answered — the backlog is skipped once, not on every restart.
+
+Set `replyToExistingOnStart: true` if you actually do want the existing inbox answered.
+
+`inbound: "webhook"` sidesteps this entirely, since webhooks only deliver events that happen
+after the subscription exists.
 
 #### Throughput
 
