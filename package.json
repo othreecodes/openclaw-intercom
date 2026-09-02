@@ -53,6 +53,23 @@
       "./index.ts"
     ],
     "setupEntry": "./setup-entry.ts",
+    "install": {
+      "clawhubSpec": "clawhub:@othreecodes/openclaw-intercom",
+      "npmSpec": "@othreecodes/openclaw-intercom",
+      "defaultChoice": "clawhub",
+      "minHostVersion": ">=2026.8.0"
+    },
+    "compat": {
+      "pluginApi": ">=2026.8.0"
+    },
+    "build": {
+      "openclawVersion": "2026.8.2",
+      "bundledDist": false
+    },
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": false
+    },
     "channel": {
       "id": "intercom",
       "label": "Intercom",
