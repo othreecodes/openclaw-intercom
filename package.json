@@ -24,19 +24,17 @@
   "author": "Obi Uchenna David",
   "type": "module",
   "files": [
-    "index.ts",
-    "setup-entry.ts",
-    "src/**/*.ts",
-    "!src/**/*.test.ts",
+    "dist/**",
     "openclaw.plugin.json",
     "README.md",
-    "LICENSE",
-    "tsconfig.json"
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -53,6 +51,10 @@
       "./index.ts"
     ],
     "setupEntry": "./setup-entry.ts",
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
+    "runtimeSetupEntry": "./dist/setup-entry.js",
     "install": {
       "clawhubSpec": "clawhub:@othreecodes/openclaw-intercom",
       "npmSpec": "@othreecodes/openclaw-intercom",
