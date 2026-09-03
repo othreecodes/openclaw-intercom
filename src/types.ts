@@ -127,6 +127,16 @@ export interface IntercomConversationSource {
   delivered_as?: string;
   /** Page the customer was on when they opened the chat, when known. */
   url?: string | null;
+  attachments?: IntercomAttachment[];
+}
+
+/** A file the customer attached — on Instagram, almost always a screenshot. */
+export interface IntercomAttachment {
+  type?: string;
+  name?: string;
+  content_type?: string;
+  url?: string;
+  filesize?: number;
 }
 
 export interface IntercomConversationPart {
@@ -135,6 +145,7 @@ export interface IntercomConversationPart {
   body?: string | null;
   created_at?: number;
   author?: IntercomAuthor;
+  attachments?: IntercomAttachment[];
 }
 
 export interface IntercomConversation {
