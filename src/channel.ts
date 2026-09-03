@@ -70,7 +70,15 @@ export const intercomChannel = createChatChannelPlugin<ResolvedIntercomAccount>(
         detailLabel: "Intercom support inbox",
         // SF Symbol shown on the channel card. Without one the Control UI
         // falls back to the first two letters of the id ("IN").
-        systemImage: "questionmark.bubble",
+        //
+        // A brand logo is not an option: ChannelUiMetaSchema is a closed object
+        // of {id, label, detailLabel, systemImage}, so every channel uses a
+        // generic symbol — Discord "bubble.left.and.bubble.right", LINE
+        // "message.fill", Google Chat "message.badge". Matching that convention
+        // with a filled bubble, which also reads closest to Intercom's own
+        // messenger mark. The previous "questionmark.bubble" looked like an
+        // unsupported or unknown channel rather than a messaging one.
+        systemImage: "message.fill",
         // An empty docsPath makes the Gateway log the channel as having
         // incomplete metadata and fill the field in itself.
         docsPath: "https://github.com/othreecodes/openclaw-intercom#readme",
