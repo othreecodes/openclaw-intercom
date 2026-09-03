@@ -18,7 +18,8 @@ export interface IntercomChannelConfig {
    * `[[close]]` directive (model decides) or the customer's message reads as a
    * resolution ("thanks, that's all"). Defaults to true. */
   autoClose?: boolean;
-  /** Teammate (admin) or team id the bot hands off to on `[[escalate]]`. */
+  /** Teammate (admin) or team id the bot hands off to on `[[escalate]]`. Also the
+   * fallback when the agent names a route that is not in {@link escalationTargets}. */
   escalationAssigneeId?: string;
   /** Whether escalationAssigneeId is an "admin" (teammate) or "team". Defaults to admin. */
   escalationAssigneeType?: "admin" | "team";
@@ -28,6 +29,13 @@ export interface IntercomChannelConfig {
    * left untouched — not claimed, not replied to — so a human still owns them.
    */
   allowedChannels?: string[];
+  /**
+   * Named hand-off routes the agent may pick between with
+   * `[[escalate to <name>: reason]]`. Keys are the names the agent uses; they are
+   * matched case-insensitively. A route the agent invents is never followed —
+   * it falls back to {@link escalationAssigneeId} and is logged.
+   */
+  escalationTargets?: Record<string, IntercomEscalationTarget>;
   /** Create tags that don't exist yet when the agent emits `[[tag: ...]]`. Defaults to true. */
   createMissingTags?: boolean;
   /** Fetch the customer's contact profile and give it to the agent as context. Defaults to true. */
@@ -63,6 +71,7 @@ export interface ResolvedIntercomAccount {
   escalationAssigneeId?: string;
   escalationAssigneeType: "admin" | "team";
   allowedChannels?: string[];
+  escalationTargets: Record<string, ResolvedEscalationTarget>;
   createMissingTags: boolean;
   contactContext: boolean;
   persona: string;
@@ -150,4 +159,24 @@ export interface IntercomWebhookPayload {
   data?: {
     item?: IntercomConversation;
   };
+}
+
+/** One named hand-off route, as written in config. */
+export interface IntercomEscalationTarget {
+  /** Intercom admin or team id to assign to. */
+  id: string;
+  /** Whether `id` names an "admin" (teammate) or a "team". Defaults to team. */
+  type?: "admin" | "team";
+  /** Shown to the agent so it can pick the right route. Keep it about the work,
+   * not the people (e.g. "failed or missing payments"). */
+  description?: string;
+}
+
+/** A validated route, keyed by its lowercased name. */
+export interface ResolvedEscalationTarget {
+  /** The name as written in config, preserved for logs and notes. */
+  name: string;
+  id: string;
+  type: "admin" | "team";
+  description?: string;
 }

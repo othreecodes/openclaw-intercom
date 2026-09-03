@@ -1,5 +1,10 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
-import type { IntercomChannelConfig, ResolvedIntercomAccount } from "./types.js";
+import type {
+  IntercomChannelConfig,
+  IntercomEscalationTarget,
+  ResolvedEscalationTarget,
+  ResolvedIntercomAccount,
+} from "./types.js";
 
 export const INTERCOM_CHANNEL_ID = "intercom";
 export const DEFAULT_POLL_INTERVAL_SECONDS = 20;
@@ -53,6 +58,7 @@ export function resolveIntercomAccount(
     escalationAssigneeId: section.escalationAssigneeId || undefined,
     escalationAssigneeType: section.escalationAssigneeType === "team" ? "team" : "admin",
     allowedChannels: normalizeAllowedChannels(section.allowedChannels),
+    escalationTargets: normalizeEscalationTargets(section.escalationTargets),
     createMissingTags: section.createMissingTags !== false,
     contactContext: section.contactContext !== false,
     persona: (typeof section.persona === "string" && section.persona.trim()) || DEFAULT_PERSONA,
@@ -74,4 +80,29 @@ export function normalizeAllowedChannels(raw: unknown): string[] | undefined {
     .map((v) => v.trim().toLowerCase())
     .filter(Boolean);
   return out.length > 0 ? [...new Set(out)] : undefined;
+}
+
+/**
+ * Validate the configured hand-off routes, dropping any without an id so a typo
+ * in config cannot silently send conversations nowhere. Keys are lowercased for
+ * case-insensitive lookup; the original spelling is kept for logs and notes.
+ */
+export function normalizeEscalationTargets(
+  raw: Record<string, IntercomEscalationTarget> | undefined,
+): Record<string, ResolvedEscalationTarget> {
+  const out: Record<string, ResolvedEscalationTarget> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [name, value] of Object.entries(raw)) {
+    const id = typeof value?.id === "string" ? value.id.trim() : "";
+    if (!name.trim() || !id) continue;
+    out[name.trim().toLowerCase()] = {
+      name: name.trim(),
+      id,
+      // Routes are far more often teams than individuals, and assigning to a
+      // single teammate who is away strands the conversation.
+      type: value.type === "admin" ? "admin" : "team",
+      description: typeof value.description === "string" ? value.description.trim() : undefined,
+    };
+  }
+  return out;
 }
