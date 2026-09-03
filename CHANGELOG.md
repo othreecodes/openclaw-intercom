@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+Republish of 1.0.1. The 1.0.1 publish to ClawHub failed inside the registry's
+publish gate after the version record had been created, leaving the version
+number claimed but with no artifact and `latest` still pointing at 1.0.0. The
+version could then neither be installed nor re-published, so the same code ships
+as 1.0.2. No code changes from 1.0.1.
+
 ## 1.0.1
 
 ### Fixed
