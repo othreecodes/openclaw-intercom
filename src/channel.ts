@@ -40,7 +40,7 @@ async function sendIntercomText(params: {
   // tagging and escalation pipeline -- see deliverAgentReply's own comment for
   // why that matters. Skipping it here is what let raw [[directive]] syntax
   // reach a customer once before.
-  const { postedPartId } = await deliverAgentReply({
+  const { postedPartId, escalated } = await deliverAgentReply({
     client,
     conversationId,
     adminId,
@@ -49,6 +49,7 @@ async function sendIntercomText(params: {
     logger: inbox?.logger ?? console,
     markOwnPart: inbox ? (id, partId) => inbox.markOwnPart(id, partId) : undefined,
   });
+  if (escalated) inbox?.escalated?.markEscalated(conversationId);
   return { messageId: postedPartId ?? `${conversationId}:${Date.now()}` };
 }
 
