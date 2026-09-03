@@ -5,6 +5,7 @@ import {
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { IntercomClient } from "./client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./config.js";
+import { deliverAgentReply } from "./deliver.js";
 import { getIntercomInbox } from "./runtime-state.js";
 import type { IntercomConversation, ResolvedIntercomAccount } from "./types.js";
 
@@ -32,13 +33,23 @@ async function sendIntercomText(params: {
   const client = new IntercomClient(account.token, account.apiVersion);
   const adminId = account.adminId ?? (await client.me()).id;
   const conversationId = stripIntercomTargetPrefix(params.to);
-  const conversation = await client.reply(conversationId, adminId, params.text);
-  const partId = findLatestAdminPartId(conversation);
-  if (partId) {
-    // Record our own reply part so poll/webhook ingest never re-ingests it.
-    getIntercomInbox(params.accountId)?.markOwnPart(conversationId, partId);
-  }
-  return { messageId: partId ?? `${conversationId}:${Date.now()}` };
+  const inbox = getIntercomInbox(params.accountId);
+  // Every reply after the first turn of a conversation is delivered through
+  // this generic outbound-send hook rather than index.ts's inbound-dispatch
+  // wrapper, so this has to run the exact same directive parsing, rendering,
+  // tagging and escalation pipeline -- see deliverAgentReply's own comment for
+  // why that matters. Skipping it here is what let raw [[directive]] syntax
+  // reach a customer once before.
+  const { postedPartId } = await deliverAgentReply({
+    client,
+    conversationId,
+    adminId,
+    account,
+    raw: params.text,
+    logger: inbox?.logger ?? console,
+    markOwnPart: inbox ? (id, partId) => inbox.markOwnPart(id, partId) : undefined,
+  });
+  return { messageId: postedPartId ?? `${conversationId}:${Date.now()}` };
 }
 
 const intercomConfigAdapter = {
