@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { describeAttachments } from "./media.js";
-import { IntercomInbox } from "./inbox.js";
+import { extractInlineImages, IntercomInbox } from "./inbox.js";
 
 const logger = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() });
 
@@ -131,5 +131,60 @@ describe("image-only messages reach the agent", () => {
     const msg = onMessage.mock.calls[0][0];
     expect(msg.body).toContain("Here is the receipt");
     expect(msg.attachments).toHaveLength(1);
+  });
+});
+
+describe("extractInlineImages", () => {
+  it("finds an Instagram DM image embedded in the body with empty attachments", () => {
+    const body =
+      '<div class="intercom-container"><img src="https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=232009&amp;signature=Ab0ZQ"></div>';
+    const out = extractInlineImages(body);
+    expect(out).toHaveLength(1);
+    // Entity-decoded: the signed query string must keep a literal ampersand.
+    expect(out[0].url).toBe("https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=232009&signature=Ab0ZQ");
+    expect(out[0].content_type).toBe("image/unknown");
+  });
+
+  it("returns nothing for a plain text body", () => {
+    expect(extractInlineImages("<p>How much for this?</p>")).toHaveLength(0);
+    expect(extractInlineImages("")).toHaveLength(0);
+    expect(extractInlineImages(null)).toHaveLength(0);
+  });
+
+  it("ignores non-http sources", () => {
+    expect(extractInlineImages('<img src="data:image/png;base64,AAAA">')).toHaveLength(0);
+  });
+});
+
+describe("inline images reach the agent (the Instagram shape)", () => {
+  it("dispatches a body-only image part with the extracted attachment", async () => {
+    const onMessage = vi.fn(async (_m: { attachments?: { url?: string }[] }) => {});
+    const dedupe = {
+      isFresh: false,
+      isProcessed: () => false,
+      markProcessed: () => true,
+      markOwnPart: () => {},
+      isOwnPart: () => false,
+    };
+    const inbox = new IntercomInbox(
+      {} as never, "admin-1", dedupe as never, onMessage,
+      { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      true, 10, true, false,
+    );
+    await inbox.ingestConversation({
+      id: "c1",
+      conversation_parts: {
+        conversation_parts: [
+          {
+            id: "p1",
+            body: '<div class="intercom-container"><img src="https://lookaside.fbsbx.com/x?a=1&amp;s=2"></div>',
+            author: { type: "user", id: "u1" },
+            attachments: [],
+          },
+        ],
+      },
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].attachments?.[0]?.url).toBe("https://lookaside.fbsbx.com/x?a=1&s=2");
   });
 });

@@ -49,7 +49,8 @@ export async function describeAttachments(params: {
       lines.push(`[The customer attached another image: ${name}]`);
       continue;
     }
-    const ext = path.extname(name) || ".img";
+    // Inline Instagram images have no filename; .jpg lets the describer sniff MIME.
+    const ext = path.extname(name) || ".jpg";
     const tmp = path.join(os.tmpdir(), `intercom-att-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
     try {
       await params.download(att.url, tmp);
