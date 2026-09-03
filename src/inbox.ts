@@ -215,6 +215,23 @@ export function resolveTagNames(
   return out;
 }
 
+/**
+ * The channel a conversation is on, lowercased, or undefined when the payload
+ * does not say.
+ *
+ * `channel.current` is preferred over `channel.initial` because a conversation
+ * that moved (Messenger to email, say) should be judged on where it is now.
+ * `source.type` is the older shape and still appears on some payloads; there
+ * "conversation" is what the rest of the API calls "messenger".
+ */
+export function conversationChannel(conversation: IntercomConversation): string | undefined {
+  const raw =
+    conversation.channel?.current ?? conversation.channel?.initial ?? conversation.source?.type;
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  const value = raw.trim().toLowerCase();
+  return value === "conversation" ? "messenger" : value;
+}
+
 /** Compact one-line profile summary for reply context (name/email live elsewhere). */
 export function summarizeContact(contact: IntercomContact): string {
   const bits: string[] = [];
@@ -299,6 +316,11 @@ export class IntercomInbox {
     private readonly replyToExistingOnStart: boolean = false,
     /** True when the dedupe store had no prior state: a first-ever run. */
     private readonly coldStart: boolean = false,
+    /**
+     * Intercom channels to answer. Undefined means every channel; the bot only
+     * ever narrows behaviour when this is explicitly configured.
+     */
+    private readonly allowedChannels: string[] | undefined = undefined,
   ) {
     // Only a cold start has a backlog to skip. Later restarts read persisted
     // dedupe state, so anything genuinely new — including messages that
@@ -367,9 +389,31 @@ export class IntercomInbox {
     this.dedupe.markProcessed(conversationId, partId);
   }
 
+  /**
+   * True when this conversation is on a channel the bot answers.
+   *
+   * A conversation whose channel cannot be determined is treated as allowed:
+   * the allowlist exists to keep the bot off named surfaces, and silently
+   * dropping conversations because a payload was thinner than expected would be
+   * a far worse failure than answering one extra.
+   */
+  private channelAllowed(conversation: IntercomConversation): boolean {
+    if (!this.allowedChannels || this.allowedChannels.length === 0) return true;
+    const channel = conversationChannel(conversation);
+    if (!channel) return true;
+    return this.allowedChannels.includes(channel);
+  }
+
   async ingestConversation(conversation: IntercomConversation): Promise<number> {
     const conversationId = conversation.id;
     if (!conversationId) return 0;
+    if (!this.channelAllowed(conversation)) {
+      this.logger.info(
+        `intercom: ignoring conversation ${conversationId} on channel ` +
+          `${conversationChannel(conversation)} (answering: ${this.allowedChannels?.join(", ")})`,
+      );
+      return 0;
+    }
     let dispatched = 0;
 
     const source = conversation.source;
@@ -481,7 +525,15 @@ export class IntercomInbox {
         const full = await this.client.getConversation(conversation.id);
         // Claim unassigned conversations so the bot owns follow-up and they move
         // into the assigned inbox (also avoids re-scanning them as unassigned).
-        if (this.pickupUnassigned && wasUnassigned && isUnassigned(full)) {
+        if (
+          this.pickupUnassigned &&
+          wasUnassigned &&
+          isUnassigned(full) &&
+          // Claiming assigns the bot to the conversation. Doing that on a
+          // channel it will not answer takes it out of the unassigned inbox
+          // where a human would have found it.
+          this.channelAllowed(full)
+        ) {
           try {
             await this.client.assign(full.id, this.adminId);
             claimed += 1;
