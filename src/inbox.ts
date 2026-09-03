@@ -65,6 +65,13 @@ export interface AgentDirectives {
   notes: string[];
   /** `[[tag: a, b]]` — conversation tags (may repeat / comma-list). */
   tags: string[];
+  /**
+   * Raw, unsplit bodies of each `[[tag: ...]]` directive. Preserved because a
+   * tag name may legitimately contain a comma (e.g. "How to-s (save, invest,
+   * etc.)"), which naive splitting shreds into several bogus tags. Resolution
+   * against the workspace vocabulary happens in {@link applyConversationTags}.
+   */
+  tagLists: string[];
 }
 
 const NOTE_DIRECTIVE = /\[\[\s*note\s*:\s*([^\]]+?)\s*\]\]/gi;
@@ -80,6 +87,7 @@ const CLOSE_DIRECTIVE = /\[\[\s*close\s*\]\]/gi;
 export function parseDirectives(reply: string): AgentDirectives {
   const notes: string[] = [];
   const tags: string[] = [];
+  const tagLists: string[] = [];
   let escalate = false;
   let escalateReason: string | undefined;
 
@@ -89,6 +97,8 @@ export function parseDirectives(reply: string): AgentDirectives {
     return "";
   });
   text = text.replace(TAG_DIRECTIVE, (_m, list: string) => {
+    const whole = list.trim();
+    if (whole) tagLists.push(whole);
     for (const raw of list.split(",")) {
       const tag = raw.trim();
       if (tag) tags.push(tag);
@@ -106,7 +116,7 @@ export function parseDirectives(reply: string): AgentDirectives {
   const close = text !== beforeClose;
 
   text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  return { text, close, escalate, escalateReason, notes, tags };
+  return { text, close, escalate, escalateReason, notes, tags, tagLists };
 }
 
 /** Back-compat helper: close-only view of {@link parseDirectives}. */
@@ -127,22 +137,82 @@ export async function applyConversationTags(
   adminId: string,
   tagNames: string[],
   createMissing: boolean,
+  logger?: Pick<IntercomInboxLogger, "warn">,
 ): Promise<string[]> {
   if (tagNames.length === 0) return [];
   const existing = await client.listTags();
   const byName = new Map(existing.map((t) => [t.name.toLowerCase(), t]));
   const applied: string[] = [];
-  for (const name of tagNames) {
+  const skipped: string[] = [];
+  for (const name of resolveTagNames(tagNames, byName)) {
     let tag = byName.get(name.toLowerCase());
     if (!tag) {
-      if (!createMissing) continue;
+      if (!createMissing) {
+        skipped.push(name);
+        continue;
+      }
       tag = await client.createTag(name);
       byName.set(name.toLowerCase(), tag);
     }
     await client.tagConversation(conversationId, tag.id, adminId);
     applied.push(tag.name);
   }
+  if (skipped.length > 0) {
+    logger?.warn(
+      `intercom: ignored unknown tag(s) on ${conversationId}: ${skipped.join(", ")} ` +
+        `(createMissingTags is off)`,
+    );
+  }
   return applied;
+}
+
+/**
+ * Turn the bodies of `[[tag: ...]]` directives into tag names.
+ *
+ * A comma is both the separator between tags and a legal character inside a tag
+ * name, so the whole body is matched against the workspace vocabulary first and
+ * only split when that fails. Each comma-separated piece gets the same
+ * treatment, so a mixed body like `"Investment Inquiry, How to-s (save, invest,
+ * etc.)"` still recovers the second tag by re-joining the pieces that do not
+ * resolve on their own.
+ */
+export function resolveTagNames(
+  rawLists: string[],
+  byName: Map<string, { name: string }>,
+): string[] {
+  const out: string[] = [];
+  const push = (name: string) => {
+    if (name && !out.some((n) => n.toLowerCase() === name.toLowerCase())) out.push(name);
+  };
+  for (const raw of rawLists) {
+    const whole = raw.trim();
+    if (!whole) continue;
+    if (byName.has(whole.toLowerCase())) {
+      push(whole);
+      continue;
+    }
+    const parts = whole.split(",").map((p) => p.trim()).filter(Boolean);
+    // Greedily prefer the longest run of pieces that names a real tag, so a
+    // comma-bearing name survives even when other tags share the directive.
+    let i = 0;
+    while (i < parts.length) {
+      let matched = false;
+      for (let j = parts.length; j > i; j--) {
+        const candidate = parts.slice(i, j).join(", ");
+        if (byName.has(candidate.toLowerCase())) {
+          push(candidate);
+          i = j;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        push(parts[i]);
+        i += 1;
+      }
+    }
+  }
+  return out;
 }
 
 /** Compact one-line profile summary for reply context (name/email live elsewhere). */

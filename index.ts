@@ -89,7 +89,8 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       `[[close]] when the issue is fully resolved (never on the first message or while anything is open); ` +
       `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; ` +
       `[[note: text]] to leave a private internal note; ` +
-      `[[tag: label1, label2]] to tag the conversation for triage.]` +
+      `[[tag: label]] to tag the conversation for triage — use one directive per tag, ` +
+      `and use a tag name exactly as it already exists in the workspace.]` +
       `\n\n${message.body}`;
     await dispatchInboundDirectDmWithRuntime({
       runtime: api.runtime,
@@ -111,9 +112,16 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       inboundAccessAuthorized: true,
       deliver: async (payload) => {
         const raw = payload.text?.trim();
-        const { text, close: modelClose, escalate, escalateReason, notes, tags } = raw
+        const { text, close: modelClose, escalate, escalateReason, notes, tagLists } = raw
           ? parseDirectives(raw)
-          : { text: "", close: false, escalate: false, escalateReason: undefined, notes: [], tags: [] };
+          : {
+              text: "",
+              close: false,
+              escalate: false,
+              escalateReason: undefined,
+              notes: [],
+              tagLists: [],
+            };
         const convId = message.conversationId;
 
         // Public reply to the customer.
@@ -139,14 +147,15 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
         }
 
         // #3 Tagging (resolve names -> ids, creating when allowed).
-        if (tags.length > 0) {
+        if (tagLists.length > 0) {
           try {
             const applied = await applyConversationTags(
               client,
               convId,
               adminId,
-              tags,
+              tagLists,
               account.createMissingTags,
+              api.logger,
             );
             if (applied.length > 0) {
               api.logger.info(`intercom: tagged ${convId} with ${applied.join(", ")}`);
