@@ -63,6 +63,25 @@
             "default": true,
             "description": "Also answer open conversations that are unassigned (Messenger/widget visitors land unassigned) and claim them for the bot admin"
           },
+          "allowedChannels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "messenger",
+                "email",
+                "whatsapp",
+                "sms",
+                "phone_call",
+                "facebook",
+                "twitter",
+                "instagram",
+                "push",
+                "custom"
+              ]
+            },
+            "description": "Intercom channels the bot answers, e.g. [\"messenger\",\"email\"]. Omit or leave empty to answer every channel. Conversations on any other channel are left untouched -- not claimed and not replied to -- so a human still owns them."
+          },
           "autoClose": {
             "type": "boolean",
             "default": true,

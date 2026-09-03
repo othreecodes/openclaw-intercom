@@ -22,6 +22,12 @@ export interface IntercomChannelConfig {
   escalationAssigneeId?: string;
   /** Whether escalationAssigneeId is an "admin" (teammate) or "team". Defaults to admin. */
   escalationAssigneeType?: "admin" | "team";
+  /**
+   * Intercom surfaces the bot answers on, e.g. ["messenger", "email"]. Omit or
+   * leave empty to answer every channel. Conversations on any other channel are
+   * left untouched — not claimed, not replied to — so a human still owns them.
+   */
+  allowedChannels?: string[];
   /** Create tags that don't exist yet when the agent emits `[[tag: ...]]`. Defaults to true. */
   createMissingTags?: boolean;
   /** Fetch the customer's contact profile and give it to the agent as context. Defaults to true. */
@@ -56,6 +62,7 @@ export interface ResolvedIntercomAccount {
   autoClose: boolean;
   escalationAssigneeId?: string;
   escalationAssigneeType: "admin" | "team";
+  allowedChannels?: string[];
   createMissingTags: boolean;
   contactContext: boolean;
   persona: string;
@@ -105,6 +112,12 @@ export interface IntercomConversationSource {
   id?: string;
   body?: string | null;
   author?: IntercomAuthor;
+  /** Delivery surface, e.g. "conversation" (Messenger), "email", "push". */
+  type?: string;
+  /** How it arrived: "customer_initiated", "admin_initiated", "automated". */
+  delivered_as?: string;
+  /** Page the customer was on when they opened the chat, when known. */
+  url?: string | null;
 }
 
 export interface IntercomConversationPart {
@@ -122,6 +135,11 @@ export interface IntercomConversation {
   admin_assignee_id?: number | string | null;
   team_assignee_id?: number | string | null;
   source?: IntercomConversationSource;
+  /** Surface the conversation arrived on, and where it is now if it moved. */
+  channel?: {
+    initial?: string | null;
+    current?: string | null;
+  };
   conversation_parts?: {
     conversation_parts?: IntercomConversationPart[];
   };

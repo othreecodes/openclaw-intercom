@@ -52,6 +52,7 @@ export function resolveIntercomAccount(
     autoClose: section.autoClose !== false,
     escalationAssigneeId: section.escalationAssigneeId || undefined,
     escalationAssigneeType: section.escalationAssigneeType === "team" ? "team" : "admin",
+    allowedChannels: normalizeAllowedChannels(section.allowedChannels),
     createMissingTags: section.createMissingTags !== false,
     contactContext: section.contactContext !== false,
     persona: (typeof section.persona === "string" && section.persona.trim()) || DEFAULT_PERSONA,
@@ -59,4 +60,18 @@ export function resolveIntercomAccount(
     rateLimitPerMinute,
     replyToExistingOnStart: section.replyToExistingOnStart === true,
   };
+}
+
+/**
+ * Normalise the channel allowlist. An absent or empty list means "every
+ * channel", so that leaving it unset keeps existing behaviour rather than
+ * silently muting the bot everywhere.
+ */
+export function normalizeAllowedChannels(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  return out.length > 0 ? [...new Set(out)] : undefined;
 }
