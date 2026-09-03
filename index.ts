@@ -7,6 +7,7 @@ import { IntercomClient } from "./src/client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./src/config.js";
 import { IntercomDedupeStore } from "./src/dedupe.js";
 import { EscalatedStore } from "./src/escalated.js";
+import { OriginStore, originAsRoute } from "./src/origin.js";
 import { deliverAgentReply } from "./src/deliver.js";
 import {
   IntercomInbox,
@@ -41,6 +42,10 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
   );
   const escalated = new EscalatedStore(
     path.join(stateDir, `escalated-${account.accountId ?? "default"}.json`),
+    (message) => api.logger.error(message),
+  );
+  const origin = new OriginStore(
+    path.join(stateDir, `origin-${account.accountId ?? "default"}.json`),
     (message) => api.logger.error(message),
   );
 
@@ -114,6 +119,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       timestamp: message.createdAt ? message.createdAt * 1000 : Date.now(),
       inboundAccessAuthorized: true,
       deliver: async (payload) => {
+        const recordedOrigin = origin.get(message.conversationId);
         const result = await deliverAgentReply({
           client,
           conversationId: message.conversationId,
@@ -123,6 +129,10 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           logger: api.logger,
           markOwnPart: (convId, partId) => inbox.markOwnPart(convId, partId),
           customerMessageBody: message.body,
+          // Not our own admin id: escalating "back" to ourselves would not
+          // hand the conversation to a human at all.
+          originTeam:
+            recordedOrigin?.adminId === adminId ? undefined : originAsRoute(recordedOrigin),
         });
         if (result.escalated) escalated.markEscalated(message.conversationId);
       },
@@ -147,6 +157,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     dedupe.isFresh,
     account.allowedChannels,
     escalated,
+    origin,
   );
   registerIntercomInbox(account.accountId, inbox);
 
@@ -204,19 +215,14 @@ const intercomEntry = defineChannelPluginEntry({
  * Describe the escalate directive to the agent, listing the configured routes so
  * it picks a real one. Falls back to the unrouted form when no routes are set.
  */
-function escalationDirectiveHint(account: ResolvedIntercomAccount): string {
-  const routes = Object.values(account.escalationTargets);
-  if (routes.length === 0) {
-    return `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; `;
-  }
-  const list = routes
-    .map((r) => (r.description ? `"${r.name}" (${r.description})` : `"${r.name}"`))
-    .join(", ");
-  return (
-    `[[escalate to <queue>: reason]] to hand off to a human when you cannot resolve it — ` +
-    `pick the queue that matches the problem from: ${list}. ` +
-    `Use exactly one of those names; if none fits, use [[escalate: reason]] with no queue; `
-  );
+/**
+ * Escalation always hands the conversation back to whichever inbox it was
+ * already on -- Sisi does not choose the destination, so the agent is not
+ * asked to name one. Naming a queue used to change the routing; now it would
+ * only be quietly ignored, which is worse than not offering it.
+ */
+function escalationDirectiveHint(_account: ResolvedIntercomAccount): string {
+  return `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; `;
 }
 
 export default intercomEntry;
