@@ -6,6 +6,7 @@ import { intercomChannel } from "./src/channel.js";
 import { IntercomClient } from "./src/client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./src/config.js";
 import { IntercomDedupeStore } from "./src/dedupe.js";
+import { renderReplyHtml } from "./src/render.js";
 import {
   applyConversationTags,
   IntercomInbox,
@@ -126,7 +127,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
 
         // Public reply to the customer.
         if (text) {
-          const conversation = await client.reply(convId, adminId, text);
+          const conversation = await client.reply(convId, adminId, renderReplyHtml(text));
           const parts = conversation.conversation_parts?.conversation_parts ?? [];
           for (let i = parts.length - 1; i >= 0; i -= 1) {
             const part = parts[i];
