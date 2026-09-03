@@ -9,6 +9,7 @@ import { IntercomDedupeStore } from "./src/dedupe.js";
 import { EscalatedStore } from "./src/escalated.js";
 import { OriginStore, originAsRoute } from "./src/origin.js";
 import { deliverAgentReply } from "./src/deliver.js";
+import { describeAttachments, downloadToFile } from "./src/media.js";
 import {
   IntercomInbox,
   summarizeContact,
@@ -87,6 +88,25 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       }
     }
 
+    // Screenshots are half of Instagram support. Describe them through the
+    // runtime's media understanding so the agent can actually read a payment
+    // receipt or an error screen, instead of denying an image ever arrived.
+    let attachmentContext = "";
+    if (message.attachments?.length) {
+      attachmentContext = await describeAttachments({
+        attachments: message.attachments,
+        logger: api.logger,
+        download: downloadToFile,
+        describe: async (filePath) => {
+          const result = await api.runtime.mediaUnderstanding.describeImageFile({
+            filePath,
+            cfg: api.config,
+          });
+          return typeof result === "string" ? result : ((result as { text?: string })?.text ?? "");
+        },
+      });
+    }
+
     // The agent reads bodyForAgent; the persona (configurable) sets the voice,
     // then we pin who it's talking to (so it never assumes the sender is David)
     // and what inline actions it can take.
@@ -99,7 +119,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       `[[note: text]] to leave a private internal note; ` +
       `[[tag: label]] to tag the conversation for triage — use one directive per tag, ` +
       `and use a tag name exactly as it already exists in the workspace.]` +
-      `\n\n${message.body}`;
+      `\n\n${[message.body, attachmentContext].filter(Boolean).join("\n\n")}`;
     await dispatchInboundDirectDmWithRuntime({
       runtime: api.runtime,
       cfg: api.config,
