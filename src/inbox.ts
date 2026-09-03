@@ -4,6 +4,7 @@ import type { OriginStore } from "./origin.js";
 import type { IntercomClient } from "./client.js";
 import type { IntercomDedupeStore } from "./dedupe.js";
 import type {
+  IntercomAttachment,
   IntercomContact,
   IntercomConversation,
   ResolvedEscalationTarget,
@@ -35,6 +36,8 @@ export interface InboundIntercomMessage {
   authorName?: string;
   authorEmail?: string;
   createdAt?: number;
+  /** Files the customer attached. An image-only message has an empty body. */
+  attachments?: IntercomAttachment[];
 }
 
 export interface IntercomInboxLogger {
@@ -490,34 +493,39 @@ export class IntercomInbox {
     const pending: InboundIntercomMessage[] = [];
 
     const source = conversation.source;
-    if (isCustomerAuthor(source?.author?.type) && source?.body) {
+    if (isCustomerAuthor(source?.author?.type) && (source?.body || source?.attachments?.length)) {
       const sourceId = source.id ? `source-${source.id}` : `source-${conversationId}`;
       if (!this.dedupe.isProcessed(conversationId, sourceId)) {
         this.dedupe.markProcessed(conversationId, sourceId);
         pending.push({
           conversationId,
           partId: sourceId,
-          body: intercomBodyToText(source.body),
+          body: intercomBodyToText(source.body ?? ""),
           authorId: source.author!.id,
           authorName: source.author!.name ?? undefined,
           authorEmail: source.author!.email ?? undefined,
+          attachments: source.attachments?.length ? source.attachments : undefined,
         });
       }
     }
 
     const parts = conversation.conversation_parts?.conversation_parts ?? [];
     for (const part of parts) {
-      if (!isCustomerAuthor(part.author?.type) || !part.body || !part.id) continue;
+      // An image-only message has an empty body: skipping it meant the bot
+      // never knew the message existed and told the customer no image arrived.
+      if (!isCustomerAuthor(part.author?.type) || !part.id) continue;
+      if (!part.body && !part.attachments?.length) continue;
       if (this.dedupe.isProcessed(conversationId, part.id)) continue;
       this.dedupe.markProcessed(conversationId, part.id);
       pending.push({
         conversationId,
         partId: part.id,
-        body: intercomBodyToText(part.body),
+        body: intercomBodyToText(part.body ?? ""),
         authorId: part.author!.id,
         authorName: part.author!.name ?? undefined,
         authorEmail: part.author!.email ?? undefined,
         createdAt: part.created_at,
+        attachments: part.attachments?.length ? part.attachments : undefined,
       });
     }
 
@@ -528,6 +536,7 @@ export class IntercomInbox {
       pending.length === 1
         ? last.body
         : pending.map((m) => m.body).filter(Boolean).join("\n\n");
+    const attachments = pending.flatMap((m) => m.attachments ?? []);
     if (pending.length > 1) {
       this.logger.info(
         `intercom: coalesced ${pending.length} customer message(s) on ${conversationId} into one turn`,
@@ -535,12 +544,12 @@ export class IntercomInbox {
     }
     // Identity and part id come from the newest message: the dedupe marks above
     // already cover the rest, and the reply should thread after the latest part.
-    await this.dispatch({ ...last, body });
+    await this.dispatch({ ...last, body, attachments: attachments.length ? attachments : undefined });
     return pending.length;
   }
 
   private async dispatch(message: InboundIntercomMessage): Promise<void> {
-    if (!message.body) return;
+    if (!message.body && !message.attachments?.length) return;
     try {
       await detachedFromStartupAdmission(() => this.onMessage(message));
     } catch (err) {
