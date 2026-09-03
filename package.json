@@ -1,6 +1,6 @@
 {
   "name": "@othreecodes/openclaw-intercom",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenClaw channel plugin for Intercom. The agent works as a support teammate: receives conversations by polling or webhook and replies to customers via the Intercom API.",
   "keywords": [
     "openclaw",
