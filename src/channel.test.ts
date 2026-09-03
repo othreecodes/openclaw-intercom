@@ -265,6 +265,49 @@ describe("webhook handler", () => {
     return new IntercomInbox(client, "admin-1", dedupe, onMessage, silentLogger);
   }
 
+  it("fetches the canonical conversation instead of trusting the payload body", async () => {
+    // The webhook payload renders an Instagram photo with its <img> flattened
+    // away; only the API body carries it. The handler must ingest the fetched
+    // version, or the degraded copy wins the dedupe race.
+    const seen: InboundIntercomMessage[] = [];
+    const inbox = makeInbox(async (m) => {
+      seen.push(m);
+    });
+    const canonical = {
+      ...conversation(),
+      conversation_parts: {
+        conversation_parts: [
+          {
+            id: "part-1",
+            body: '<div class="intercom-container"><img src="https://lookaside.fbsbx.com/x?a=1&amp;s=2"></div>',
+            author: { type: "user" as const, id: "user-1" },
+          },
+        ],
+      },
+    };
+    const getConversation = vi.fn(async () => canonical);
+    const handler = createIntercomWebhookHandler({
+      secret,
+      inbox,
+      logger: silentLogger,
+      client: { getConversation } as never,
+    });
+    const degraded = {
+      ...conversation(),
+      conversation_parts: {
+        conversation_parts: [
+          { id: "part-1", body: "[Image]", author: { type: "user" as const, id: "user-1" } },
+        ],
+      },
+    };
+    const body = JSON.stringify({ topic: "conversation.user.replied", data: { item: degraded } });
+    const res = makeResponse();
+    await handler(makeRequest(body, { "x-hub-signature": sign(body) }), res);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(getConversation).toHaveBeenCalledWith("conv-1");
+    expect(seen[0]?.attachments?.[0]?.url).toBe("https://lookaside.fbsbx.com/x?a=1&s=2");
+  });
+
   it("dispatches new customer parts for a valid signed payload", async () => {
     const seen: InboundIntercomMessage[] = [];
     const inbox = makeInbox(async (m) => {

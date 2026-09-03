@@ -211,6 +211,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           secret: account.webhookSecret,
           inbox,
           logger: api.logger,
+          client,
         }),
       });
       api.logger.info(`intercom: webhook registered at POST ${WEBHOOK_PATH}`);
