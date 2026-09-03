@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.4
+
+### Fixed
+
+- **The bot no longer answers messages a human teammate already handled.** A
+  conversation that spent time with human support and later re-entered the
+  bot's scope looked entirely unread to it, and it re-litigated an
+  already-resolved problem past the customer saying goodbye. Customer messages
+  at or before the last human teammate reply are now absorbed as handled;
+  workflow bots (like the "replies in under 3m" auto-responder) deliberately do
+  not count as teammates. ([#31](https://github.com/othreecodes/openclaw-intercom/pull/31))
+
+
 ## 1.0.3
 
 ### Fixed
