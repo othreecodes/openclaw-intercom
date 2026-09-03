@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { EscalatedStore } from "./escalated.js";
+import type { OriginStore } from "./origin.js";
 import type { IntercomClient } from "./client.js";
 import type { IntercomDedupeStore } from "./dedupe.js";
 import type {
@@ -372,6 +373,8 @@ export class IntercomInbox {
     private readonly allowedChannels: string[] | undefined = undefined,
     /** Conversations Sisi has escalated. Never touched again once entered. */
     readonly escalated: EscalatedStore | undefined = undefined,
+    /** Who each conversation was assigned to before Sisi ever touched it. */
+    readonly origin: OriginStore | undefined = undefined,
   ) {
     // Only a cold start has a backlog to skip. Later restarts read persisted
     // dedupe state, so anything genuinely new — including messages that
@@ -462,6 +465,13 @@ export class IntercomInbox {
     // Checked before the channel gate too: an escalation should never be
     // re-entered just because it also happens to be on an allowed channel.
     if (this.escalated?.isEscalated(conversationId)) return 0;
+    // First sighting only: capture where this conversation lived before Sisi
+    // did anything, so an eventual escalation can hand it back there instead
+    // of guessing a queue by topic.
+    this.origin?.recordIfAbsent(conversationId, {
+      adminId: conversation.admin_assignee_id ? String(conversation.admin_assignee_id) : undefined,
+      teamId: conversation.team_assignee_id ? String(conversation.team_assignee_id) : undefined,
+    });
     if (!this.channelAllowed(conversation)) {
       this.logger.info(
         `intercom: ignoring conversation ${conversationId} on channel ` +

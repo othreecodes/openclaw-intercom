@@ -6,6 +6,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { IntercomClient } from "./client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./config.js";
 import { deliverAgentReply } from "./deliver.js";
+import { originAsRoute } from "./origin.js";
 import { getIntercomInbox } from "./runtime-state.js";
 import type { IntercomConversation, ResolvedIntercomAccount } from "./types.js";
 
@@ -40,6 +41,7 @@ async function sendIntercomText(params: {
   // tagging and escalation pipeline -- see deliverAgentReply's own comment for
   // why that matters. Skipping it here is what let raw [[directive]] syntax
   // reach a customer once before.
+  const recordedOrigin = inbox?.origin?.get(conversationId);
   const { postedPartId, escalated } = await deliverAgentReply({
     client,
     conversationId,
@@ -48,6 +50,7 @@ async function sendIntercomText(params: {
     raw: params.text,
     logger: inbox?.logger ?? console,
     markOwnPart: inbox ? (id, partId) => inbox.markOwnPart(id, partId) : undefined,
+    originTeam: recordedOrigin?.adminId === adminId ? undefined : originAsRoute(recordedOrigin),
   });
   if (escalated) inbox?.escalated?.markEscalated(conversationId);
   return { messageId: postedPartId ?? `${conversationId}:${Date.now()}` };
