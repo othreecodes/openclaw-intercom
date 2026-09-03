@@ -12,6 +12,7 @@ import {
   IntercomInbox,
   isResolutionPhrase,
   parseDirectives,
+  resolveEscalationRoute,
   summarizeContact,
   type InboundIntercomMessage,
 } from "./src/inbox.js";
@@ -88,7 +89,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       `Do not assume the customer is David or anyone on your own team; address them by their own name (or neutrally if unnamed). ` +
       `Inline actions (put each on its own line, they are stripped before the customer sees them): ` +
       `[[close]] when the issue is fully resolved (never on the first message or while anything is open); ` +
-      `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; ` +
+      escalationDirectiveHint(account) +
       `[[note: text]] to leave a private internal note; ` +
       `[[tag: label]] to tag the conversation for triage — use one directive per tag, ` +
       `and use a tag name exactly as it already exists in the workspace.]` +
@@ -113,13 +114,22 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       inboundAccessAuthorized: true,
       deliver: async (payload) => {
         const raw = payload.text?.trim();
-        const { text, close: modelClose, escalate, escalateReason, notes, tagLists } = raw
+        const {
+          text,
+          close: modelClose,
+          escalate,
+          escalateReason,
+          escalateTarget,
+          notes,
+          tagLists,
+        } = raw
           ? parseDirectives(raw)
           : {
               text: "",
               close: false,
               escalate: false,
               escalateReason: undefined,
+              escalateTarget: undefined,
               notes: [],
               tagLists: [],
             };
@@ -168,26 +178,44 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
 
         // #1 Escalate / hand off to a human teammate or team.
         if (escalate) {
-          if (account.escalationAssigneeId) {
+          const route = resolveEscalationRoute(
+            escalateTarget,
+            account.escalationTargets,
+            account.escalationAssigneeId,
+            account.escalationAssigneeType,
+          );
+          if (route) {
             try {
-              if (escalateReason) {
-                await client.note(convId, adminId, `Escalation: ${escalateReason}`);
+              // The note goes on before the assignment so whoever picks the
+              // conversation up already has the reason in front of them.
+              const noteLines: string[] = [];
+              if (escalateReason) noteLines.push(`Escalation: ${escalateReason}`);
+              if (route.unknownTarget) {
+                noteLines.push(
+                  `Sisi asked for the "${route.unknownTarget}" queue, which is not configured — ` +
+                    `routed here instead. Reassign if this is the wrong desk.`,
+                );
               }
-              await client.assignTo(
-                convId,
-                adminId,
-                account.escalationAssigneeId,
-                account.escalationAssigneeType,
-              );
-              api.logger.info(
-                `intercom: escalated ${convId} to ${account.escalationAssigneeType} ${account.escalationAssigneeId}`,
-              );
+              if (noteLines.length > 0) {
+                await client.note(convId, adminId, noteLines.join("\n\n"));
+              }
+              await client.assignTo(convId, adminId, route.id, route.type);
+              const where = route.name ? `${route.name} (${route.type} ${route.id})` : `${route.type} ${route.id}`;
+              api.logger.info(`intercom: escalated ${convId} to ${where}`);
+              if (route.unknownTarget) {
+                api.logger.warn(
+                  `intercom: unknown escalation route "${route.unknownTarget}" on ${convId}; ` +
+                    `used the default assignee. Configured routes: ` +
+                    `${Object.keys(account.escalationTargets).join(", ") || "(none)"}`,
+                );
+              }
             } catch (err) {
               api.logger.warn(`intercom: failed to escalate ${convId}: ${String(err)}`);
             }
           } else {
             api.logger.warn(
-              `intercom: agent requested escalation on ${convId} but channels.intercom.escalationAssigneeId is not set`,
+              `intercom: agent requested escalation on ${convId} but neither a matching ` +
+                `escalationTargets route nor channels.intercom.escalationAssigneeId is set`,
             );
           }
         }
@@ -276,5 +304,24 @@ const intercomEntry = defineChannelPluginEntry({
     });
   },
 });
+
+/**
+ * Describe the escalate directive to the agent, listing the configured routes so
+ * it picks a real one. Falls back to the unrouted form when no routes are set.
+ */
+function escalationDirectiveHint(account: ResolvedIntercomAccount): string {
+  const routes = Object.values(account.escalationTargets);
+  if (routes.length === 0) {
+    return `[[escalate: reason]] to hand off to a human teammate when you cannot resolve it; `;
+  }
+  const list = routes
+    .map((r) => (r.description ? `"${r.name}" (${r.description})` : `"${r.name}"`))
+    .join(", ");
+  return (
+    `[[escalate to <queue>: reason]] to hand off to a human when you cannot resolve it — ` +
+    `pick the queue that matches the problem from: ${list}. ` +
+    `Use exactly one of those names; if none fits, use [[escalate: reason]] with no queue; `
+  );
+}
 
 export default intercomEntry;

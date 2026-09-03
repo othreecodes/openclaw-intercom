@@ -1,7 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { IntercomClient } from "./client.js";
 import type { IntercomDedupeStore } from "./dedupe.js";
-import type { IntercomContact, IntercomConversation } from "./types.js";
+import type {
+  IntercomContact,
+  IntercomConversation,
+  ResolvedEscalationTarget,
+} from "./types.js";
 
 /**
  * Async context captured at module load, before the Gateway enters any
@@ -63,6 +67,8 @@ export interface AgentDirectives {
   escalateReason?: string;
   /** `[[note: ...]]` — private internal notes (may repeat). */
   notes: string[];
+  /** Route named by `[[escalate to <name>]]`, before validation. */
+  escalateTarget?: string;
   /** `[[tag: a, b]]` — conversation tags (may repeat / comma-list). */
   tags: string[];
   /**
@@ -76,7 +82,11 @@ export interface AgentDirectives {
 
 const NOTE_DIRECTIVE = /\[\[\s*note\s*:\s*([^\]]+?)\s*\]\]/gi;
 const TAG_DIRECTIVE = /\[\[\s*tags?\s*:\s*([^\]]+?)\s*\]\]/gi;
-const ESCALATE_DIRECTIVE = /\[\[\s*escalate\s*(?::\s*([^\]]*?))?\s*\]\]/gi;
+// `[[escalate]]`, `[[escalate: reason]]`, `[[escalate to payments]]` or
+// `[[escalate to payments: reason]]`. The route is captured separately so a
+// reason that merely mentions a team is never mistaken for a routing choice.
+const ESCALATE_DIRECTIVE =
+  /\[\[\s*escalate(?:\s+to\s+([^:\]]+?))?\s*(?::\s*([^\]]*?))?\s*\]\]/gi;
 const CLOSE_DIRECTIVE = /\[\[\s*close\s*\]\]/gi;
 
 /**
@@ -90,6 +100,7 @@ export function parseDirectives(reply: string): AgentDirectives {
   const tagLists: string[] = [];
   let escalate = false;
   let escalateReason: string | undefined;
+  let escalateTarget: string | undefined;
 
   let text = reply.replace(NOTE_DIRECTIVE, (_m, body: string) => {
     const b = body.trim();
@@ -105,8 +116,10 @@ export function parseDirectives(reply: string): AgentDirectives {
     }
     return "";
   });
-  text = text.replace(ESCALATE_DIRECTIVE, (_m, reason?: string) => {
+  text = text.replace(ESCALATE_DIRECTIVE, (_m, target?: string, reason?: string) => {
     escalate = true;
+    const t = target?.trim();
+    if (t) escalateTarget = t;
     const r = reason?.trim();
     if (r) escalateReason = r;
     return "";
@@ -116,7 +129,7 @@ export function parseDirectives(reply: string): AgentDirectives {
   const close = text !== beforeClose;
 
   text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  return { text, close, escalate, escalateReason, notes, tags, tagLists };
+  return { text, close, escalate, escalateReason, escalateTarget, notes, tags, tagLists };
 }
 
 /** Back-compat helper: close-only view of {@link parseDirectives}. */
@@ -230,6 +243,41 @@ export function conversationChannel(conversation: IntercomConversation): string 
   if (typeof raw !== "string" || !raw.trim()) return undefined;
   const value = raw.trim().toLowerCase();
   return value === "conversation" ? "messenger" : value;
+}
+
+/** Where an escalation should actually go, after validating the agent's choice. */
+export interface EscalationRoute {
+  id: string;
+  type: "admin" | "team";
+  /** Route name for logs and the internal note; absent when using the default. */
+  name?: string;
+  /** Set when the agent named a route that does not exist, so the caller can say
+   * so on the conversation instead of silently sending it to the default desk. */
+  unknownTarget?: string;
+}
+
+/**
+ * Pick the hand-off destination for an escalation.
+ *
+ * A route the agent invented is never followed: routing a customer to a desk
+ * that does not exist is worse than the default desk, because nobody is
+ * watching it. Unknown names fall back to the default and are reported.
+ */
+export function resolveEscalationRoute(
+  requested: string | undefined,
+  targets: Record<string, ResolvedEscalationTarget>,
+  defaultId: string | undefined,
+  defaultType: "admin" | "team",
+): EscalationRoute | undefined {
+  const wanted = requested?.trim().toLowerCase();
+  if (wanted) {
+    const match = targets[wanted];
+    if (match) return { id: match.id, type: match.type, name: match.name };
+    if (!defaultId) return undefined;
+    return { id: defaultId, type: defaultType, unknownTarget: requested?.trim() };
+  }
+  if (!defaultId) return undefined;
+  return { id: defaultId, type: defaultType };
 }
 
 /** Compact one-line profile summary for reply context (name/email live elsewhere). */

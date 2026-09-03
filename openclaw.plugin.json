@@ -100,6 +100,36 @@
             "default": "admin",
             "description": "Whether escalationAssigneeId refers to a teammate (admin) or a team"
           },
+          "escalationTargets": {
+            "type": "object",
+            "description": "Named hand-off queues the agent can pick between with [[escalate to <name>: reason]]. A name the agent invents is not followed: it falls back to escalationAssigneeId and is logged.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Intercom admin or team id to assign to"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "admin",
+                    "team"
+                  ],
+                  "default": "team",
+                  "description": "Whether id refers to a teammate (admin) or a team"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Shown to the agent so it picks the right queue"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": false
+            }
+          },
           "createMissingTags": {
             "type": "boolean",
             "default": true,
