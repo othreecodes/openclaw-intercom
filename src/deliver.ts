@@ -4,6 +4,7 @@ import {
   isResolutionPhrase,
   parseDirectives,
   resolveEscalationRoute,
+  type EscalationRoute,
   type IntercomInboxLogger,
 } from "./inbox.js";
 import { renderReplyHtml } from "./render.js";
@@ -39,6 +40,14 @@ export async function deliverAgentReply(params: {
    * a "thanks, that's all" style reply should auto-close. Omit when unknown --
    * the model's own `[[close]]` directive still works either way. */
   customerMessageBody?: string;
+  /**
+   * The inbox this conversation was assigned to before Sisi ever touched it.
+   * When present, escalation always hands back here, ignoring whatever queue
+   * the model named -- "escalate back to the same inbox you picked it from,"
+   * not a topic guess. The named-queue directive still parses and still
+   * drives the fallback below, for a conversation with no known origin.
+   */
+  originTeam?: { id: string; type: "admin" | "team" };
 }): Promise<{ postedPartId?: string; escalated: boolean }> {
   const { client, conversationId: convId, adminId, account, raw, logger, markOwnPart } = params;
   const trimmed = raw?.trim();
@@ -121,12 +130,14 @@ export async function deliverAgentReply(params: {
 
   // Escalate / hand off to a human teammate or team.
   if (escalate) {
-    const route = resolveEscalationRoute(
-      escalateTarget,
-      account.escalationTargets,
-      account.escalationAssigneeId,
-      account.escalationAssigneeType,
-    );
+    const route: EscalationRoute | undefined = params.originTeam
+      ? { id: params.originTeam.id, type: params.originTeam.type, name: "the original inbox" }
+      : resolveEscalationRoute(
+          escalateTarget,
+          account.escalationTargets,
+          account.escalationAssigneeId,
+          account.escalationAssigneeType,
+        );
     if (route) {
       try {
         // The note goes on before the assignment so whoever picks the

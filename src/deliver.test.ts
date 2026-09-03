@@ -113,6 +113,34 @@ describe("deliverAgentReply", () => {
     expect(markOwnPart).toHaveBeenCalledWith("c1", "p1");
   });
 
+  it("escalates to the origin team even when the model named a different queue", async () => {
+    const client = makeClient();
+    await deliverAgentReply({
+      client,
+      conversationId: "c1",
+      adminId: "5111943",
+      account: account(), // configures a "fraud" queue at team id 8407270
+      raw: "Sorry about that!\n[[escalate to fraud: hacked account]]",
+      logger: logger(),
+      originTeam: { id: "5550689", type: "team" }, // Socials -- where it came from
+    });
+    // Not the named "fraud" queue (8407270) -- the conversation's own inbox.
+    expect((client as any).assignTo).toHaveBeenCalledWith("c1", "5111943", "5550689", "team");
+  });
+
+  it("falls back to the named queue when no origin is known", async () => {
+    const client = makeClient();
+    await deliverAgentReply({
+      client,
+      conversationId: "c1",
+      adminId: "5111943",
+      account: account(),
+      raw: "Sorry about that!\n[[escalate to fraud: hacked account]]",
+      logger: logger(),
+    });
+    expect((client as any).assignTo).toHaveBeenCalledWith("c1", "5111943", "8407270", "team");
+  });
+
   it("closes on a model [[close]] directive even without a customer message", async () => {
     const client = makeClient();
     await deliverAgentReply({
