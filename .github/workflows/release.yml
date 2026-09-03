@@ -1,0 +1,57 @@
+name: Publish to ClawHub
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag v$TAG_VERSION does not match package.json $PKG_VERSION" >&2
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Extract changelog for this version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Section between "## <version>" and the next "## " heading.
+          awk -v v="$VERSION" '
+            $0 ~ "^## "v"$" {grab=1; next}
+            grab && /^## / {exit}
+            grab {print}
+          ' CHANGELOG.md | sed "/^$/d" > /tmp/changelog.txt
+          if [ ! -s /tmp/changelog.txt ]; then
+            echo "No CHANGELOG.md section found for $VERSION" >&2
+            exit 1
+          fi
+          cat /tmp/changelog.txt
+
+      - name: Publish
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+        run: |
+          npx --yes clawhub@latest login --token "$CLAWHUB_TOKEN"
+          npx --yes clawhub@latest package publish . \
+            --family code-plugin \
+            --name "@othreecodes/openclaw-intercom" \
+            --owner othreecodes \
+            --version "${GITHUB_REF_NAME#v}" \
+            --changelog "$(cat /tmp/changelog.txt)" \
+            --no-input
