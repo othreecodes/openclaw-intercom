@@ -39,7 +39,7 @@ export async function deliverAgentReply(params: {
    * a "thanks, that's all" style reply should auto-close. Omit when unknown --
    * the model's own `[[close]]` directive still works either way. */
   customerMessageBody?: string;
-}): Promise<{ postedPartId?: string }> {
+}): Promise<{ postedPartId?: string; escalated: boolean }> {
   const { client, conversationId: convId, adminId, account, raw, logger, markOwnPart } = params;
   const trimmed = raw?.trim();
   const {
@@ -63,6 +63,7 @@ export async function deliverAgentReply(params: {
       };
 
   let postedPartId: string | undefined;
+  let escalated = false;
 
   // Last-resort net: even after parseDirectives, no `[[...]]`-shaped text
   // should ever reach a customer. This has already fired once for a real
@@ -142,8 +143,9 @@ export async function deliverAgentReply(params: {
           await client.note(convId, adminId, noteLines.join("\n\n"));
         }
         await client.assignTo(convId, adminId, route.id, route.type);
+        escalated = true;
         const where = route.name ? `${route.name} (${route.type} ${route.id})` : `${route.type} ${route.id}`;
-        logger.info(`intercom: escalated ${convId} to ${where}`);
+        logger.info(`intercom: escalated ${convId} to ${where}; Sisi will not respond on it again`);
         if (route.unknownTarget) {
           logger.warn(
             `intercom: unknown escalation route "${route.unknownTarget}" on ${convId}; ` +
@@ -176,5 +178,5 @@ export async function deliverAgentReply(params: {
     }
   }
 
-  return { postedPartId };
+  return { postedPartId, escalated };
 }
