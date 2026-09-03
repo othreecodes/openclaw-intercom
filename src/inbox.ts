@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { EscalatedStore } from "./escalated.js";
 import type { IntercomClient } from "./client.js";
 import type { IntercomDedupeStore } from "./dedupe.js";
 import type {
@@ -369,6 +370,8 @@ export class IntercomInbox {
      * ever narrows behaviour when this is explicitly configured.
      */
     private readonly allowedChannels: string[] | undefined = undefined,
+    /** Conversations Sisi has escalated. Never touched again once entered. */
+    readonly escalated: EscalatedStore | undefined = undefined,
   ) {
     // Only a cold start has a backlog to skip. Later restarts read persisted
     // dedupe state, so anything genuinely new — including messages that
@@ -455,6 +458,10 @@ export class IntercomInbox {
   async ingestConversation(conversation: IntercomConversation): Promise<number> {
     const conversationId = conversation.id;
     if (!conversationId) return 0;
+    // Escalated conversations belong to a human until they say otherwise.
+    // Checked before the channel gate too: an escalation should never be
+    // re-entered just because it also happens to be on an allowed channel.
+    if (this.escalated?.isEscalated(conversationId)) return 0;
     if (!this.channelAllowed(conversation)) {
       this.logger.info(
         `intercom: ignoring conversation ${conversationId} on channel ` +
@@ -577,6 +584,7 @@ export class IntercomInbox {
           this.pickupUnassigned &&
           wasUnassigned &&
           isUnassigned(full) &&
+          !this.escalated?.isEscalated(full.id) &&
           // Claiming assigns the bot to the conversation. Doing that on a
           // channel it will not answer takes it out of the unassigned inbox
           // where a human would have found it.

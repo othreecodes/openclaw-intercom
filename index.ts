@@ -6,6 +6,7 @@ import { intercomChannel } from "./src/channel.js";
 import { IntercomClient } from "./src/client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./src/config.js";
 import { IntercomDedupeStore } from "./src/dedupe.js";
+import { EscalatedStore } from "./src/escalated.js";
 import { deliverAgentReply } from "./src/deliver.js";
 import {
   IntercomInbox,
@@ -36,6 +37,10 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
   const stateDir = path.join(api.runtime.state.resolveStateDir(), "intercom");
   const dedupe = new IntercomDedupeStore(
     path.join(stateDir, `dedupe-${account.accountId ?? "default"}.json`),
+    (message) => api.logger.error(message),
+  );
+  const escalated = new EscalatedStore(
+    path.join(stateDir, `escalated-${account.accountId ?? "default"}.json`),
     (message) => api.logger.error(message),
   );
 
@@ -119,7 +124,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           markOwnPart: (convId, partId) => inbox.markOwnPart(convId, partId),
           customerMessageBody: message.body,
         });
-        void result;
+        if (result.escalated) escalated.markEscalated(message.conversationId);
       },
       onRecordError: (err) => {
         api.logger.error(`intercom: failed to record inbound message: ${String(err)}`);
@@ -141,6 +146,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     account.replyToExistingOnStart,
     dedupe.isFresh,
     account.allowedChannels,
+    escalated,
   );
   registerIntercomInbox(account.accountId, inbox);
 
