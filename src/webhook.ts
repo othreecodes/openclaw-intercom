@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IntercomClient } from "./client.js";
 import type { IntercomInbox, IntercomInboxLogger } from "./inbox.js";
 import type { IntercomWebhookPayload } from "./types.js";
 
@@ -46,8 +47,10 @@ export function createIntercomWebhookHandler(params: {
   secret: string;
   inbox: IntercomInbox;
   logger: IntercomInboxLogger;
+  /** When set, the canonical conversation is fetched before ingesting. */
+  client?: Pick<IntercomClient, "getConversation">;
 }) {
-  const { secret, inbox, logger } = params;
+  const { secret, inbox, logger, client } = params;
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     if ((req.method ?? "").toUpperCase() !== "POST") {
       respond(res, 405, "method not allowed");
@@ -84,9 +87,30 @@ export function createIntercomWebhookHandler(params: {
       // Ack fast; ingest shares the poll path's dedupe so "both" mode never double-answers.
       // Use the same per-conversation gate the poll loop uses, so a webhook
       // delivery and a concurrent poll never drive one conversation at once.
-      void inbox.withConversationLock(item.id, () => inbox.ingestConversation(item)).catch((err) => {
-        logger.error(`intercom webhook: ingest failed for conversation ${item.id}: ${String(err)}`);
-      });
+      //
+      // The payload is treated as a NOTIFICATION, not as data: Intercom renders
+      // webhook part bodies differently from the API -- an Instagram photo
+      // arrives in the payload with its <img> flattened away -- and because the
+      // webhook usually beats the poll, its degraded copy used to win the
+      // dedupe race and the canonical body was never seen. Fetch the real
+      // conversation first; fall back to the payload only if the fetch fails.
+      void inbox
+        .withConversationLock(item.id, async () => {
+          let conversation = item;
+          if (client) {
+            try {
+              conversation = await client.getConversation(item.id);
+            } catch (err) {
+              logger.warn(
+                `intercom webhook: falling back to payload body for ${item.id}; fetch failed: ${String(err)}`,
+              );
+            }
+          }
+          return inbox.ingestConversation(conversation);
+        })
+        .catch((err) => {
+          logger.error(`intercom webhook: ingest failed for conversation ${item.id}: ${String(err)}`);
+        });
     }
 
     respond(res, 200, "ok");
