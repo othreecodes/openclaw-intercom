@@ -479,15 +479,22 @@ export class IntercomInbox {
       );
       return 0;
     }
-    let dispatched = 0;
+    // Gather every unanswered customer message first, then dispatch them as ONE
+    // agent turn. Dispatching each part individually meant a conversation with
+    // a backlog -- a human-handled thread entering Sisi's scope, or a customer
+    // sending five messages in a burst -- produced one reply per old message,
+    // ten seconds apart, each read in isolation. A conversation seen live did
+    // exactly that: thirteen stale messages, thirteen replies, an escalation on
+    // nearly every one. One coalesced turn answers the whole state of the
+    // conversation once, with full context.
+    const pending: InboundIntercomMessage[] = [];
 
     const source = conversation.source;
     if (isCustomerAuthor(source?.author?.type) && source?.body) {
       const sourceId = source.id ? `source-${source.id}` : `source-${conversationId}`;
       if (!this.dedupe.isProcessed(conversationId, sourceId)) {
         this.dedupe.markProcessed(conversationId, sourceId);
-        dispatched += 1;
-        await this.dispatch({
+        pending.push({
           conversationId,
           partId: sourceId,
           body: intercomBodyToText(source.body),
@@ -503,8 +510,7 @@ export class IntercomInbox {
       if (!isCustomerAuthor(part.author?.type) || !part.body || !part.id) continue;
       if (this.dedupe.isProcessed(conversationId, part.id)) continue;
       this.dedupe.markProcessed(conversationId, part.id);
-      dispatched += 1;
-      await this.dispatch({
+      pending.push({
         conversationId,
         partId: part.id,
         body: intercomBodyToText(part.body),
@@ -514,7 +520,23 @@ export class IntercomInbox {
         createdAt: part.created_at,
       });
     }
-    return dispatched;
+
+    if (pending.length === 0) return 0;
+
+    const last = pending[pending.length - 1];
+    const body =
+      pending.length === 1
+        ? last.body
+        : pending.map((m) => m.body).filter(Boolean).join("\n\n");
+    if (pending.length > 1) {
+      this.logger.info(
+        `intercom: coalesced ${pending.length} customer message(s) on ${conversationId} into one turn`,
+      );
+    }
+    // Identity and part id come from the newest message: the dedupe marks above
+    // already cover the rest, and the reply should thread after the latest part.
+    await this.dispatch({ ...last, body });
+    return pending.length;
   }
 
   private async dispatch(message: InboundIntercomMessage): Promise<void> {

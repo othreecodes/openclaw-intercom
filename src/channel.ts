@@ -35,6 +35,16 @@ async function sendIntercomText(params: {
   const adminId = account.adminId ?? (await client.me()).id;
   const conversationId = stripIntercomTargetPrefix(params.to);
   const inbox = getIntercomInbox(params.accountId);
+  // Same rule as the inbound side: once a conversation is escalated to a
+  // human, turns already queued in the agent runtime are dropped, not
+  // delivered. Without this, a backlog of queued turns kept replying (and
+  // re-escalating) for a full minute after the first hand-off.
+  if (inbox?.escalated?.isEscalated(conversationId)) {
+    (inbox.logger ?? console).info(
+      `intercom: dropping queued reply on ${conversationId}; already escalated to a human`,
+    );
+    return { messageId: `${conversationId}:dropped-escalated:${Date.now()}` };
+  }
   // Every reply after the first turn of a conversation is delivered through
   // this generic outbound-send hook rather than index.ts's inbound-dispatch
   // wrapper, so this has to run the exact same directive parsing, rendering,

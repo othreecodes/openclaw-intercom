@@ -119,6 +119,16 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       timestamp: message.createdAt ? message.createdAt * 1000 : Date.now(),
       inboundAccessAuthorized: true,
       deliver: async (payload) => {
+        // An earlier turn may have escalated while this one was still queued in
+        // the agent runtime. The ingest guard cannot see queued turns, so this
+        // is the second half of "stop responding once escalated": first
+        // escalation wins, everything still in the pipe is dropped.
+        if (escalated.isEscalated(message.conversationId)) {
+          api.logger.info(
+            `intercom: dropping queued reply on ${message.conversationId}; already escalated to a human`,
+          );
+          return;
+        }
         const recordedOrigin = origin.get(message.conversationId);
         const result = await deliverAgentReply({
           client,
