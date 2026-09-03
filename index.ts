@@ -6,13 +6,9 @@ import { intercomChannel } from "./src/channel.js";
 import { IntercomClient } from "./src/client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./src/config.js";
 import { IntercomDedupeStore } from "./src/dedupe.js";
-import { renderReplyHtml } from "./src/render.js";
+import { deliverAgentReply } from "./src/deliver.js";
 import {
-  applyConversationTags,
   IntercomInbox,
-  isResolutionPhrase,
-  parseDirectives,
-  resolveEscalationRoute,
   summarizeContact,
   type InboundIntercomMessage,
 } from "./src/inbox.js";
@@ -113,124 +109,17 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       timestamp: message.createdAt ? message.createdAt * 1000 : Date.now(),
       inboundAccessAuthorized: true,
       deliver: async (payload) => {
-        const raw = payload.text?.trim();
-        const {
-          text,
-          close: modelClose,
-          escalate,
-          escalateReason,
-          escalateTarget,
-          notes,
-          tagLists,
-        } = raw
-          ? parseDirectives(raw)
-          : {
-              text: "",
-              close: false,
-              escalate: false,
-              escalateReason: undefined,
-              escalateTarget: undefined,
-              notes: [],
-              tagLists: [],
-            };
-        const convId = message.conversationId;
-
-        // Public reply to the customer.
-        if (text) {
-          const conversation = await client.reply(convId, adminId, renderReplyHtml(text));
-          const parts = conversation.conversation_parts?.conversation_parts ?? [];
-          for (let i = parts.length - 1; i >= 0; i -= 1) {
-            const part = parts[i];
-            if (part.author?.type === "admin" && part.id) {
-              inbox.markOwnPart(convId, part.id);
-              break;
-            }
-          }
-        }
-
-        // #2 Private internal notes (never shown to the customer).
-        for (const noteBody of notes) {
-          try {
-            await client.note(convId, adminId, noteBody);
-          } catch (err) {
-            api.logger.warn(`intercom: failed to add note on ${convId}: ${String(err)}`);
-          }
-        }
-
-        // #3 Tagging (resolve names -> ids, creating when allowed).
-        if (tagLists.length > 0) {
-          try {
-            const applied = await applyConversationTags(
-              client,
-              convId,
-              adminId,
-              tagLists,
-              account.createMissingTags,
-              api.logger,
-            );
-            if (applied.length > 0) {
-              api.logger.info(`intercom: tagged ${convId} with ${applied.join(", ")}`);
-            }
-          } catch (err) {
-            api.logger.warn(`intercom: failed to tag ${convId}: ${String(err)}`);
-          }
-        }
-
-        // #1 Escalate / hand off to a human teammate or team.
-        if (escalate) {
-          const route = resolveEscalationRoute(
-            escalateTarget,
-            account.escalationTargets,
-            account.escalationAssigneeId,
-            account.escalationAssigneeType,
-          );
-          if (route) {
-            try {
-              // The note goes on before the assignment so whoever picks the
-              // conversation up already has the reason in front of them.
-              const noteLines: string[] = [];
-              if (escalateReason) noteLines.push(`Escalation: ${escalateReason}`);
-              if (route.unknownTarget) {
-                noteLines.push(
-                  `Sisi asked for the "${route.unknownTarget}" queue, which is not configured — ` +
-                    `routed here instead. Reassign if this is the wrong desk.`,
-                );
-              }
-              if (noteLines.length > 0) {
-                await client.note(convId, adminId, noteLines.join("\n\n"));
-              }
-              await client.assignTo(convId, adminId, route.id, route.type);
-              const where = route.name ? `${route.name} (${route.type} ${route.id})` : `${route.type} ${route.id}`;
-              api.logger.info(`intercom: escalated ${convId} to ${where}`);
-              if (route.unknownTarget) {
-                api.logger.warn(
-                  `intercom: unknown escalation route "${route.unknownTarget}" on ${convId}; ` +
-                    `used the default assignee. Configured routes: ` +
-                    `${Object.keys(account.escalationTargets).join(", ") || "(none)"}`,
-                );
-              }
-            } catch (err) {
-              api.logger.warn(`intercom: failed to escalate ${convId}: ${String(err)}`);
-            }
-          } else {
-            api.logger.warn(
-              `intercom: agent requested escalation on ${convId} but neither a matching ` +
-                `escalationTargets route nor channels.intercom.escalationAssigneeId is set`,
-            );
-          }
-        }
-
-        // Close — but not if we just escalated (a human still needs it open).
-        if (!escalate && account.autoClose && (modelClose || isResolutionPhrase(message.body))) {
-          try {
-            await client.close(convId, adminId);
-            api.logger.info(
-              `intercom: closed conversation ${convId} (${modelClose ? "model" : "customer-resolved"})`,
-            );
-          } catch (err) {
-            api.logger.warn(`intercom: failed to close conversation ${convId}: ${String(err)}`);
-          }
-        }
+        const result = await deliverAgentReply({
+          client,
+          conversationId: message.conversationId,
+          adminId,
+          account,
+          raw: payload.text,
+          logger: api.logger,
+          markOwnPart: (convId, partId) => inbox.markOwnPart(convId, partId),
+          customerMessageBody: message.body,
+        });
+        void result;
       },
       onRecordError: (err) => {
         api.logger.error(`intercom: failed to record inbound message: ${String(err)}`);

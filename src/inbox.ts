@@ -352,7 +352,7 @@ export class IntercomInbox {
     private readonly adminId: string,
     private readonly dedupe: IntercomDedupeStore,
     private readonly onMessage: (message: InboundIntercomMessage) => Promise<void>,
-    private readonly logger: IntercomInboxLogger,
+    readonly logger: IntercomInboxLogger,
     private readonly pickupUnassigned: boolean = true,
     private readonly maxConcurrentConversations: number = 10,
     /**
