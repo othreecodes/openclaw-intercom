@@ -503,6 +503,29 @@ export class IntercomInbox {
       );
       return 0;
     }
+    // A message a human teammate has already answered is not Sisi's to answer.
+    // Her dedupe store only knows what SHE has seen: a conversation that spent
+    // the afternoon with a human and re-enters her scope later looks entirely
+    // unread, and she once re-litigated a five-hour-old, already-resolved
+    // problem right past the customer saying "that's all, thanks". Anything at
+    // or before the last human reply is absorbed as handled. Workflow bots
+    // (author.type "bot", e.g. the "replies in under 3m" auto-responder) do
+    // not count as humans, or every new conversation would be absorbed.
+    let lastTeammateReplyAt = 0;
+    for (const part of conversation.conversation_parts?.conversation_parts ?? []) {
+      if (
+        part.author?.type === "admin" &&
+        part.author.id &&
+        String(part.author.id) !== this.adminId &&
+        part.body &&
+        typeof part.created_at === "number" &&
+        part.created_at > lastTeammateReplyAt
+      ) {
+        lastTeammateReplyAt = part.created_at;
+      }
+    }
+    let absorbed = 0;
+
     // Gather every unanswered customer message first, then dispatch them as ONE
     // agent turn. Dispatching each part individually meant a conversation with
     // a backlog -- a human-handled thread entering Sisi's scope, or a customer
@@ -518,6 +541,10 @@ export class IntercomInbox {
       const sourceId = source.id ? `source-${source.id}` : `source-${conversationId}`;
       if (!this.dedupe.isProcessed(conversationId, sourceId)) {
         this.dedupe.markProcessed(conversationId, sourceId);
+        if (lastTeammateReplyAt > 0) {
+          // Any teammate reply postdates the conversation's opening message.
+          absorbed += 1;
+        } else {
         const atts = [...(source.attachments ?? []), ...extractInlineImages(source.body)];
         pending.push({
           conversationId,
@@ -528,6 +555,7 @@ export class IntercomInbox {
           authorEmail: source.author!.email ?? undefined,
           attachments: atts.length ? atts : undefined,
         });
+        }
       }
     }
 
@@ -539,6 +567,10 @@ export class IntercomInbox {
       if (!part.body && !part.attachments?.length) continue;
       if (this.dedupe.isProcessed(conversationId, part.id)) continue;
       this.dedupe.markProcessed(conversationId, part.id);
+      if (typeof part.created_at === "number" && part.created_at <= lastTeammateReplyAt) {
+        absorbed += 1;
+        continue;
+      }
       const partAtts = [...(part.attachments ?? []), ...extractInlineImages(part.body)];
       pending.push({
         conversationId,
@@ -552,6 +584,11 @@ export class IntercomInbox {
       });
     }
 
+    if (absorbed > 0) {
+      this.logger.info(
+        `intercom: absorbed ${absorbed} customer message(s) on ${conversationId} already answered by a teammate`,
+      );
+    }
     if (pending.length === 0) return 0;
 
     const last = pending[pending.length - 1];
