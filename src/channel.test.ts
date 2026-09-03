@@ -279,8 +279,10 @@ describe("webhook handler", () => {
     await handler(makeRequest(body, { "x-hub-signature": sign(body) }), res);
     await new Promise((resolve) => setImmediate(resolve));
     expect(res.statusCode).toBe(200);
-    expect(seen.map((m) => m.partId)).toEqual(["source-src-1", "part-1"]);
-    expect(seen[0].body).toBe("Hello there");
+    // Both pending messages arrive as one coalesced turn, threaded on the
+    // newest part -- one reply per state of the conversation, not per message.
+    expect(seen.map((m) => m.partId)).toEqual(["part-1"]);
+    expect(seen[0].body).toContain("Hello there");
   });
 
   it("rejects an invalid signature with 401 and dispatches nothing", async () => {
@@ -316,9 +318,10 @@ describe("dedupe and both-mode single dispatch", () => {
     }, silentLogger);
 
     // Simulate poll ingesting the conversation, then webhook delivering it again.
+    // The two pending messages coalesce into one dispatch; the redelivery adds none.
     await inbox.ingestConversation(conversation());
     await inbox.ingestConversation(conversation());
-    expect(seen).toEqual(["source-src-1", "part-1"]);
+    expect(seen).toEqual(["part-1"]);
   });
 
   it("skips admin/bot parts and never dispatches our own replies", async () => {
@@ -362,7 +365,7 @@ describe("poll loop", () => {
     await inbox.pollOnce();
     expect((client.searchAssignedConversations as any).mock.calls[0][0]).toBe("admin-1");
     expect((client.getConversation as any).mock.calls[0][0]).toBe("conv-1");
-    expect(seen).toEqual(["source-src-1", "part-1"]);
+    expect(seen).toEqual(["part-1"]);
   });
 
   it("picks up unassigned conversations, claims them, and answers lead visitors", async () => {
