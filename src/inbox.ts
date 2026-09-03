@@ -322,6 +322,27 @@ export function isResolutionPhrase(body: string): boolean {
   return RESOLUTION_PATTERNS.some((re) => re.test(text));
 }
 
+/**
+ * Images embedded in the message body itself, not in `attachments`.
+ *
+ * Instagram DMs deliver photos as an `<img>` inside the HTML body with an
+ * EMPTY attachments array -- unlike Messenger uploads, which use the
+ * attachments field. Keying on attachments alone meant Instagram screenshots
+ * (the main kind this bot sees) were stripped out with the rest of the HTML
+ * and never reached the agent.
+ */
+export function extractInlineImages(rawBody: string | null | undefined): IntercomAttachment[] {
+  if (!rawBody) return [];
+  const out: IntercomAttachment[] = [];
+  for (const match of rawBody.matchAll(/<img[^>]+src="([^"]+)"/gi)) {
+    // Entity-decode: Intercom serialises the query string with &amp;.
+    const url = match[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    if (!/^https?:\/\//i.test(url)) continue;
+    out.push({ type: "inline", name: "attached image", content_type: "image/unknown", url });
+  }
+  return out;
+}
+
 /** Strip Intercom's HTML message bodies down to plain text. */
 export function intercomBodyToText(body: string): string {
   return body
@@ -497,6 +518,7 @@ export class IntercomInbox {
       const sourceId = source.id ? `source-${source.id}` : `source-${conversationId}`;
       if (!this.dedupe.isProcessed(conversationId, sourceId)) {
         this.dedupe.markProcessed(conversationId, sourceId);
+        const atts = [...(source.attachments ?? []), ...extractInlineImages(source.body)];
         pending.push({
           conversationId,
           partId: sourceId,
@@ -504,7 +526,7 @@ export class IntercomInbox {
           authorId: source.author!.id,
           authorName: source.author!.name ?? undefined,
           authorEmail: source.author!.email ?? undefined,
-          attachments: source.attachments?.length ? source.attachments : undefined,
+          attachments: atts.length ? atts : undefined,
         });
       }
     }
@@ -517,6 +539,7 @@ export class IntercomInbox {
       if (!part.body && !part.attachments?.length) continue;
       if (this.dedupe.isProcessed(conversationId, part.id)) continue;
       this.dedupe.markProcessed(conversationId, part.id);
+      const partAtts = [...(part.attachments ?? []), ...extractInlineImages(part.body)];
       pending.push({
         conversationId,
         partId: part.id,
@@ -525,7 +548,7 @@ export class IntercomInbox {
         authorName: part.author!.name ?? undefined,
         authorEmail: part.author!.email ?? undefined,
         createdAt: part.created_at,
-        attachments: part.attachments?.length ? part.attachments : undefined,
+        attachments: partAtts.length ? partAtts : undefined,
       });
     }
 
