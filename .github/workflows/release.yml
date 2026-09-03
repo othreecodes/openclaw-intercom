@@ -4,6 +4,9 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -55,3 +58,12 @@ jobs:
             --version "${GITHUB_REF_NAME#v}" \
             --changelog "$(cat /tmp/changelog.txt)" \
             --no-input
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file /tmp/changelog.txt \
+            --verify-tag
