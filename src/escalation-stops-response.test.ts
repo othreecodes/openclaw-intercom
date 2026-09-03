@@ -67,3 +67,74 @@ describe("IntercomInbox stops touching an escalated conversation", () => {
     expect(onMessage).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Regression for the second live failure mode: a conversation with a backlog
+ * of unanswered customer messages (a human-handled thread entering Sisi's
+ * scope, or a burst) used to dispatch one agent turn per message -- thirteen
+ * stale messages produced thirteen replies ten seconds apart, most of them
+ * re-escalating. All pending messages now become a single coalesced turn.
+ */
+describe("IntercomInbox coalesces a backlog into one turn", () => {
+  const build = () => {
+    const onMessage = vi.fn(async (_message: { body: string; partId: string }) => {});
+    const dedupe = {
+      isFresh: false,
+      isProcessed: () => false,
+      markProcessed: () => true,
+      markOwnPart: () => {},
+      isOwnPart: () => false,
+    };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const inbox = new IntercomInbox(
+      {} as never,
+      "admin-1",
+      dedupe as never,
+      onMessage,
+      logger,
+      true,
+      10,
+      true,
+      false,
+    );
+    return { inbox, onMessage };
+  };
+
+  it("dispatches one turn containing every pending message, threaded on the newest", async () => {
+    const { inbox, onMessage } = build();
+    await inbox.ingestConversation({
+      id: "c1",
+      source: {
+        id: "s1",
+        body: "<p>My investment was 360k</p>",
+        author: { type: "user", id: "u1", name: "Gabriella" },
+      },
+      conversation_parts: {
+        conversation_parts: [
+          { id: "p2", body: "<p>I sold my stock</p>", author: { type: "user", id: "u1" } },
+          { id: "p3", body: "<p>Where is my money??</p>", author: { type: "user", id: "u1" } },
+        ],
+      },
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const msg = onMessage.mock.calls[0][0];
+    expect(msg.body).toContain("My investment was 360k");
+    expect(msg.body).toContain("I sold my stock");
+    expect(msg.body).toContain("Where is my money??");
+    expect(msg.partId).toBe("p3");
+  });
+
+  it("a single new message dispatches exactly as before", async () => {
+    const { inbox, onMessage } = build();
+    await inbox.ingestConversation({
+      id: "c1",
+      source: {
+        id: "s1",
+        body: "<p>Hello!</p>",
+        author: { type: "user", id: "u1", name: "Ada" },
+      },
+    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].body).toBe("Hello!");
+  });
+});
