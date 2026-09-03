@@ -1,6 +1,7 @@
 import path from "node:path";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
+import { resolveAgentDir, resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import { dispatchInboundDirectDmWithRuntime } from "openclaw/plugin-sdk/channel-inbound";
 import { intercomChannel } from "./src/channel.js";
 import { IntercomClient } from "./src/client.js";
@@ -98,9 +99,13 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
         logger: api.logger,
         download: downloadToFile,
         describe: async (filePath) => {
+          // agentDir is required by image understanding; resolve the routed
+          // agent's directory rather than hardcoding an agent id.
+          const agentId = resolveDefaultAgentId(api.config);
           const result = await api.runtime.mediaUnderstanding.describeImageFile({
             filePath,
             cfg: api.config,
+            agentDir: resolveAgentDir(api.config, agentId),
           });
           return typeof result === "string" ? result : ((result as { text?: string })?.text ?? "");
         },
