@@ -28,17 +28,27 @@ draft replies on request. This makes the agent the support teammate customers ta
 
 ## Setup
 
-1. Install the plugin:
+1. Install the plugin — **pin the version** so you get exactly the release you reviewed
+   (this skill and the plugin share the same publisher, and the package is source-linked
+   on ClawHub, so every version maps to a verifiable GitHub commit):
 
    ```bash
-   openclaw plugins install clawhub:@othreecodes/openclaw-intercom
+   openclaw plugins install clawhub:@othreecodes/openclaw-intercom@1.0.6
    ```
 
-2. In the Intercom Developer Hub, create (or pick) an app installed on the workspace,
-   copy its **Access token**, and grant read/write on conversations (+ read contacts,
-   read/write tags if you want those features).
+   Check ClawHub for the latest version and its changelog before upgrading; treat plugin
+   upgrades like any other production dependency change.
 
-3. Configure the channel (`~/.openclaw/openclaw.json`, or the OpenClaw dashboard's
+2. **Get authorization first.** This agent will reply to real customers under a real
+   teammate identity — confirm with whoever owns the support workspace before enabling it.
+
+3. In the Intercom Developer Hub, create a **dedicated app** for the bot (don't reuse a
+   broader app's token), copy its **Access token**, and grant only what you'll use:
+   read/write conversations, plus read contacts and read/write tags if you want those
+   features. Keep the token rotatable — you'll want revocation to be one click if
+   anything looks wrong.
+
+4. Configure the channel (`~/.openclaw/openclaw.json`, or the OpenClaw dashboard's
    channel settings, where every option renders as a form):
 
    ```json
@@ -59,8 +69,14 @@ draft replies on request. This makes the agent the support teammate customers ta
    `conversation.user.created` and `conversation.user.replied`, pointed at
    `https://YOUR_GATEWAY/intercom/webhook` — the signing secret is the app's client secret.
 
-4. Restart the gateway. On first run the plugin logs how many existing conversations it
+5. Restart the gateway. On first run the plugin logs how many existing conversations it
    absorbed without replying; from the next customer message onward the agent answers.
+
+**Roll out in stages.** Start with `allowedChannels` scoped to one low-stakes pilot
+channel and `escalationAssigneeId` pointed at a real human team *before* the first
+customer message — an autonomous agent without a working hand-off path is not ready for
+production. Watch its first days of conversations, then widen the channel list as
+confidence grows.
 
 Give the agent a support persona and grounding rules in its workspace `AGENTS.md` —
 the plugin carries the messages; the agent's quality comes from its instructions.
