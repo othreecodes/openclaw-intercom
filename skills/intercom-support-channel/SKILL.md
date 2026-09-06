@@ -1,0 +1,71 @@
+---
+name: Intercom Support Channel
+description: Set up an autonomous, customer-facing support agent inside an Intercom inbox — WhatsApp, Instagram, Facebook, in-app Messenger, SMS, email. Use when someone wants an AI agent that answers Intercom customers directly (not an API helper for operators), wants to automate customer support conversations, or asks to connect OpenClaw to Intercom, WhatsApp support, or Instagram DMs.
+---
+
+# Intercom Support Channel
+
+This skill sets up **@othreecodes/openclaw-intercom** — an OpenClaw *channel* plugin where
+customers message any surface connected to Intercom (WhatsApp, Instagram, Facebook, in-app
+Messenger, SMS, email) and the agent answers them directly: greets, resolves, tags,
+annotates, escalates to a human when needed, then stays out of the human's way.
+
+This is different from Intercom API skills, which help an *operator* list conversations or
+draft replies on request. This makes the agent the support teammate customers talk to.
+
+## What the plugin handles for you
+
+- Hybrid inbound (polling + webhooks) with crash-safe dedupe — no double replies
+- One agent session per conversation; message bursts coalesce into one coherent reply
+- Reads customer screenshots (uploads and Instagram inline images) via image understanding
+- Replies render as real HTML: numbered steps, bullets, bold
+- Inline actions parsed from the agent's reply: `[[close]]`, `[[escalate: reason]]`,
+  `[[note: text]]`, `[[tag: label]]`
+- Escalation hands the conversation back to the inbox it came from and permanently mutes
+  the agent on it; messages a human teammate already answered are never re-answered
+- First run absorbs the existing backlog instead of answering the whole inbox
+- Channel scoping: pilot on one surface (`allowedChannels: ["instagram"]`), widen later
+
+## Setup
+
+1. Install the plugin:
+
+   ```bash
+   openclaw plugins install clawhub:@othreecodes/openclaw-intercom
+   ```
+
+2. In the Intercom Developer Hub, create (or pick) an app installed on the workspace,
+   copy its **Access token**, and grant read/write on conversations (+ read contacts,
+   read/write tags if you want those features).
+
+3. Configure the channel (`~/.openclaw/openclaw.json`, or the OpenClaw dashboard's
+   channel settings, where every option renders as a form):
+
+   ```json
+   {
+     "channels": {
+       "intercom": {
+         "enabled": true,
+         "token": "YOUR_ACCESS_TOKEN",
+         "inbound": "both",
+         "webhookSecret": "YOUR_APP_CLIENT_SECRET",
+         "allowedChannels": ["instagram"]
+       }
+     }
+   }
+   ```
+
+   `token` is the only required field. For webhooks, subscribe the app to
+   `conversation.user.created` and `conversation.user.replied`, pointed at
+   `https://YOUR_GATEWAY/intercom/webhook` — the signing secret is the app's client secret.
+
+4. Restart the gateway. On first run the plugin logs how many existing conversations it
+   absorbed without replying; from the next customer message onward the agent answers.
+
+Give the agent a support persona and grounding rules in its workspace `AGENTS.md` —
+the plugin carries the messages; the agent's quality comes from its instructions.
+
+## Full documentation
+
+- Package: `clawhub:@othreecodes/openclaw-intercom` (ClawHub → Packages)
+- Source, README and config reference: https://github.com/othreecodes/openclaw-intercom
