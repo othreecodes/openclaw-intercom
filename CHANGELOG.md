@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.8
+
+### Fixed
+
+- Repair a stale test assertion that referenced the pre-1.0.7 description
+  wording, which failed CI on the release/publish workflow. The 1.0.7 behavior
+  change (vision describes, never identifies) ships here; 1.0.7 never published
+  because of this test. No behavior change from the intended 1.0.7.
+
+
 ## 1.0.7
 
 ### Fixed
