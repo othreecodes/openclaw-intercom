@@ -1,7 +1,7 @@
 {
   "id": "intercom",
-  "name": "Intercom",
-  "description": "OpenClaw channel plugin for Intercom. The agent works as a support teammate: receives conversations by polling or webhook and replies to customers via the Intercom API.",
+  "name": "Intercom Support Channel",
+  "description": "Intercom support channel for OpenClaw: an autonomous, customer-facing agent that answers your Instagram/Messenger inbox end to end \u2014 reads customer screenshots, formats real replies, tags and annotates, escalates to the origin inbox and then goes silent, and never re-answers what a human teammate already handled. A channel, not an API helper skill.",
   "channels": [
     "intercom"
   ],

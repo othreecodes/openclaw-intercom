@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.5
+
+### Changed
+
+- **Repositioned the package as what it is: a channel, not an API helper.** New
+  display name ("Intercom Support Channel"), description, keywords, and a
+  rewritten README that leads with the autonomous customer-facing agent and the
+  production-hardened behaviors (image understanding, escalation lifecycle,
+  teammate-respect, burst coalescing, backlog absorption), and documents the
+  `allowedChannels` and `escalationTargets` options that were missing from the
+  config table. No code changes.
+
+
 ## 1.0.4
 
 ### Fixed
