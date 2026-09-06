@@ -58,7 +58,9 @@ export async function describeAttachments(params: {
       described += 1;
       lines.push(
         description
-          ? `[The customer sent an image (${name}). What it shows: ${description}]`
+          ? `[The customer sent an image (${name}). Automated description — may be wrong, ` +
+            `especially about which app or company is shown; if the customer says otherwise ` +
+            `about their own screen, believe the customer: ${description}]`
           : `[The customer sent an image (${name}) that could not be described]`,
       );
     } catch (err) {
