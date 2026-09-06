@@ -1,23 +1,55 @@
-# OpenClaw Intercom Plugin
+# Intercom Support Channel for OpenClaw
 
-Let an OpenClaw agent work as a support teammate in [Intercom](https://www.intercom.com/).
-The plugin watches your Intercom inbox (polling, webhooks, or both), routes each customer
-message to your agent, and posts the agent's reply back as an admin comment.
+**An autonomous, customer-facing support agent inside your Intercom inbox.**
 
-## Features
+This is a *channel*, not an API helper. Most Intercom packages teach an agent to run the
+Intercom API when *you* ask — list conversations, draft a reply, look up a contact. This
+plugin is the other direction: **customers message your Intercom (Instagram, Messenger,
+whatever you've connected), and the agent answers them directly** — greets them, resolves
+what it can, tags and annotates as it goes, and hands anything it can't resolve to a human
+teammate, then gets out of the way.
 
-- **Hybrid inbound**: polling, webhooks, or both.
-- **Deduplication**: one ingest path for poll and webhook messages, keyed on conversation part IDs — "both" mode never double-answers.
-- **Auto-reply**: responds to customers as admin comments.
-- **Session threading**: maps each Intercom conversation to an OpenClaw session.
-- **Unassigned pickup**: answers open conversations that land unassigned (Messenger/widget visitors) and claims them for the bot admin.
-- **Customer identity**: carries the customer's name/email (and optionally their full contact profile) into the agent, so replies address the real customer instead of falling back to the operator's persona.
-- **Inline agent actions**: the agent can drive Intercom from its reply text using directives that are stripped before the customer sees them:
-  - `[[close]]` — close the conversation once the issue is fully resolved.
-  - `[[escalate: reason]]` — hand off to a human teammate or team (escalated conversations are never auto-closed).
-  - `[[note: text]]` — leave a private internal note (not visible to the customer).
-  - `[[tag: label1, label2]]` — tag the conversation for triage (missing tags can be auto-created).
-- **Auto-close on resolution**: closes a conversation after replying when the agent emits `[[close]]`, or when the customer's message reads as resolved ("thanks, that's all").
+It runs a real support desk. It has the scars to prove it — every behavior below exists
+because production demanded it.
+
+## What it does
+
+**Conversation handling**
+- **Answers customers end to end** — one OpenClaw session per conversation, greeting on
+  first contact, context carried across every turn.
+- **Sees images.** Customer screenshots (Messenger uploads *and* Instagram's inline-image
+  format) are downloaded and read through the runtime's image understanding, so "here's the
+  error" gets an answer about what's actually on the screen.
+- **Proper formatting.** Replies render as real HTML — numbered steps, bullets, bold —
+  instead of raw Markdown characters in a customer's DM.
+- **Message bursts become one reply.** A customer sending five rapid messages (or a backlog
+  entering scope) gets a single coherent answer with full context, not five overlapping ones.
+
+**Judgment and hand-off**
+- **Inline agent actions**, stripped before the customer sees them: `[[close]]`,
+  `[[escalate: reason]]`, `[[note: text]]`, `[[tag: label]]` (one directive per tag; names
+  containing commas survive intact).
+- **Escalation means escalation.** A handed-off conversation returns to the inbox it came
+  from and the agent *never touches it again* — no re-replies, no re-claims, and turns
+  already queued when the escalation fired are dropped, not delivered.
+- **Respects your human team.** Messages a teammate has already answered are absorbed as
+  handled, never re-litigated — the agent only answers what came after the human's last word.
+  (Workflow bots don't count as teammates, so auto-responders can't mute it.)
+- **Safe first run.** Pointed at an inbox with an existing backlog, it absorbs history
+  instead of answering your entire open inbox at once.
+
+**Operations**
+- **Hybrid inbound** — polling, webhooks, or both, with crash-safe dedupe so no customer is
+  ever double-answered. Webhook payloads are treated as notifications and the canonical
+  conversation is fetched (payload bodies differ from the API's, e.g. flattened images).
+- **Channel scoping** — `allowedChannels: ["instagram"]` answers one surface and leaves the
+  rest to humans, without claiming conversations it won't answer.
+- **Tag discipline** — resolves against your existing tag vocabulary; unknown names are
+  logged, not silently invented (`createMissingTags: false`).
+- **Concurrency + rate limiting** — a worker pool per conversation and a token bucket over
+  every outbound Intercom call.
+- **Dashboard-native config** — every option below renders as a form in the OpenClaw
+  Control UI, driven by the plugin's config schema.
 
 ---
 
@@ -139,9 +171,11 @@ A fuller example with every option set:
 | `allowFrom` | string[] | — | Allowlist of Intercom contact IDs. Everyone is allowed when unset. |
 | `pickupUnassigned` | boolean | `true` | Also answer and claim open conversations that arrive unassigned. |
 | `autoClose` | boolean | `true` | Close after replying on `[[close]]` or a customer resolution phrase. |
-| `escalationAssigneeId` | string | — | Teammate or team the bot hands off to on `[[escalate]]`. Escalation is logged and no-ops when unset. |
+| `escalationAssigneeId` | string | — | Fallback hand-off target on `[[escalate]]` when the conversation has no recorded origin inbox. Escalation prefers the team/teammate the conversation was on before the bot touched it. |
 | `escalationAssigneeType` | `admin` \| `team` | `admin` | Whether `escalationAssigneeId` is a teammate or a team. |
-| `createMissingTags` | boolean | `true` | Create tags that don't exist yet when the agent emits `[[tag: ...]]`. |
+| `escalationTargets` | object | — | Named hand-off queues (`{name: {id, type, description}}`) used as the fallback router when no origin inbox is known. |
+| `allowedChannels` | string[] | — | Intercom surfaces to answer, e.g. `["instagram"]`. Unset answers every channel; others are left untouched and never claimed. |
+| `createMissingTags` | boolean | `true` | Create tags that don't exist yet when the agent emits `[[tag: ...]]`. Set `false` to enforce your existing vocabulary. |
 | `contactContext` | boolean | `true` | Fetch the customer's contact profile and give it to the agent as reply context. |
 | `persona` | string | neutral support voice | Voice/identity the agent adopts when replying to customers. See [Support persona](#support-persona). |
 | `maxConcurrentConversations` | number | `10` | How many conversations the agent works on at once. Each one is finished before that worker starts another. See [Throughput](#throughput). |
