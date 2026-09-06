@@ -4,8 +4,9 @@
 
 This is a *channel*, not an API helper. Most Intercom packages teach an agent to run the
 Intercom API when *you* ask — list conversations, draft a reply, look up a contact. This
-plugin is the other direction: **customers message your Intercom (Instagram, Messenger,
-whatever you've connected), and the agent answers them directly** — greets them, resolves
+plugin is the other direction: **customers message any channel connected to your Intercom —
+WhatsApp, Instagram, Facebook, in-app Messenger, SMS, email — and the agent answers them
+directly** — greets them, resolves
 what it can, tags and annotates as it goes, and hands anything it can't resolve to a human
 teammate, then gets out of the way.
 
@@ -17,7 +18,7 @@ because production demanded it.
 **Conversation handling**
 - **Answers customers end to end** — one OpenClaw session per conversation, greeting on
   first contact, context carried across every turn.
-- **Sees images.** Customer screenshots (Messenger uploads *and* Instagram's inline-image
+- **Sees images.** Customer screenshots (standard uploads *and* Instagram's inline-image
   format) are downloaded and read through the runtime's image understanding, so "here's the
   error" gets an answer about what's actually on the screen.
 - **Proper formatting.** Replies render as real HTML — numbered steps, bullets, bold —
@@ -42,8 +43,9 @@ because production demanded it.
 - **Hybrid inbound** — polling, webhooks, or both, with crash-safe dedupe so no customer is
   ever double-answered. Webhook payloads are treated as notifications and the canonical
   conversation is fetched (payload bodies differ from the API's, e.g. flattened images).
-- **Channel scoping** — `allowedChannels: ["instagram"]` answers one surface and leaves the
-  rest to humans, without claiming conversations it won't answer.
+- **Channel scoping** — the agent answers every connected surface by default;
+  `allowedChannels: ["instagram"]` pilots it on one channel and leaves the rest to humans,
+  without claiming conversations it won't answer. Widen the list as confidence grows.
 - **Tag discipline** — resolves against your existing tag vocabulary; unknown names are
   logged, not silently invented (`createMissingTags: false`).
 - **Concurrency + rate limiting** — a worker pool per conversation and a token bucket over

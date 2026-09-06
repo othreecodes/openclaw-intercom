@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.6
+
+### Changed
+
+- Metadata and README no longer read as Instagram-specific. The channel answers
+  any surface connected to Intercom — WhatsApp, Instagram, Facebook, in-app
+  Messenger, SMS, email — and `allowedChannels` is documented as the way to
+  pilot on one channel and widen later. No code changes.
+
+
 ## 1.0.5
 
 ### Changed
