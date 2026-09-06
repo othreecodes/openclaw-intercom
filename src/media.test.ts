@@ -21,6 +21,11 @@ describe("describeAttachments", () => {
     });
     expect(out).toContain("receipt.png");
     expect(out).toContain("bank transfer receipt of NGN 10,000");
+    // The description is framed as fallible and the customer as authoritative --
+    // the describer once mislabeled the operator's own login screen as a
+    // competitor's app and the agent argued with the customer about it.
+    expect(out).toContain("may be wrong");
+    expect(out).toContain("believe the customer");
     expect(fs.existsSync(savedPath)).toBe(false);
   });
 
