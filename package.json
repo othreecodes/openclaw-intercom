@@ -1,6 +1,6 @@
 {
   "name": "@othreecodes/openclaw-intercom",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Intercom support channel for OpenClaw: an autonomous, customer-facing agent that answers any channel connected to your Intercom inbox \u2014 WhatsApp, Instagram, Facebook, in-app Messenger, SMS, email \u2014 end to end. Reads customer screenshots, formats real replies, tags and annotates, escalates to the origin inbox and then goes silent, and never re-answers what a human teammate already handled. A channel, not an API helper skill.",
   "keywords": [
     "openclaw",
