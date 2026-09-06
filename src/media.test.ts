@@ -66,7 +66,7 @@ describe("describeAttachments", () => {
       download: async (_u, f) => (fs.writeFileSync(f, "x"), 1),
       describe: async () => "desc",
     });
-    expect(out.match(/What it shows/g)?.length).toBe(3);
+    expect(out.match(/Automated description/g)?.length).toBe(3);
     expect(out).toContain("another image: img4.png");
   });
 });
