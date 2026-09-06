@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.7
+
+### Fixed
+
+- **Screenshot descriptions no longer guess which app is shown.** The vision
+  describer once labeled the operator's own login screen as a competitor's app
+  and the agent argued with the customer about it. The describe call now
+  instructs: transcribe what is readable, never identify a brand unless its
+  name is literally visible; and the description reaching the agent is framed
+  as fallible, with the customer's account of their own screen explicitly
+  outranking it. ([#37](https://github.com/othreecodes/openclaw-intercom/pull/37))
+
+
 ## 1.0.6
 
 ### Changed
