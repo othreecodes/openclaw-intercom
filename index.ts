@@ -106,6 +106,16 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
             filePath,
             cfg: api.config,
             agentDir: resolveAgentDir(api.config, agentId),
+            // A customer screenshot in a support conversation. The describer
+            // once labeled the operator's own login screen as a competitor's
+            // app and the agent then argued with the customer about it -- so:
+            // describe, never identify.
+            prompt:
+              "Describe this customer-support screenshot factually: what screen or dialog is shown, " +
+              "any error or status messages (transcribe them exactly), amounts, dates, and button labels. " +
+              "Do NOT guess which company, app, or product it belongs to; only mention a brand if its " +
+              "name is literally readable as text in the image. If the app's identity is not readable, " +
+              "do not speculate about it at all.",
           });
           return typeof result === "string" ? result : ((result as { text?: string })?.text ?? "");
         },
