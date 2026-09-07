@@ -503,14 +503,14 @@ export class IntercomInbox {
       );
       return 0;
     }
-    // A message a human teammate has already answered is not Sisi's to answer.
-    // Her dedupe store only knows what SHE has seen: a conversation that spent
-    // the afternoon with a human and re-enters her scope later looks entirely
-    // unread, and she once re-litigated a five-hour-old, already-resolved
-    // problem right past the customer saying "that's all, thanks". Anything at
-    // or before the last human reply is absorbed as handled. Workflow bots
-    // (author.type "bot", e.g. the "replies in under 3m" auto-responder) do
-    // not count as humans, or every new conversation would be absorbed.
+    // If any human teammate has replied in this conversation, it is theirs and
+    // Sisi stays out of it entirely -- not just for messages before their reply,
+    // but for every later customer message too. On the shared Socials team queue
+    // a reopened conversation drops back to admin=0, so Sisi's unassigned poll
+    // would otherwise let her barge into a thread a human is actively working
+    // (observed live: 20 collisions in 30 min after WhatsApp went on). Sisi only
+    // handles conversations with no human turn -- genuinely fresh, or bot-only.
+    // Workflow bots (author.type "bot") do not count as humans.
     let lastTeammateReplyAt = 0;
     for (const part of conversation.conversation_parts?.conversation_parts ?? []) {
       if (
@@ -567,7 +567,12 @@ export class IntercomInbox {
       if (!part.body && !part.attachments?.length) continue;
       if (this.dedupe.isProcessed(conversationId, part.id)) continue;
       this.dedupe.markProcessed(conversationId, part.id);
-      if (typeof part.created_at === "number" && part.created_at <= lastTeammateReplyAt) {
+      if (lastTeammateReplyAt > 0) {
+        // A human teammate has replied in this conversation: it belongs to them.
+        // Sisi takes no further turn, even on brand-new customer messages -- on a
+        // shared team queue, a reopened conversation drops back to admin=0 and
+        // Sisi's unassigned poll would otherwise let her barge into a thread a
+        // human is actively handling.
         absorbed += 1;
         continue;
       }
@@ -586,7 +591,7 @@ export class IntercomInbox {
 
     if (absorbed > 0) {
       this.logger.info(
-        `intercom: absorbed ${absorbed} customer message(s) on ${conversationId} already answered by a teammate`,
+        `intercom: left ${absorbed} message(s) on ${conversationId} to the human teammate handling it`,
       );
     }
     if (pending.length === 0) return 0;
