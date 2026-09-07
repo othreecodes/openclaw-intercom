@@ -41,7 +41,7 @@ describe("messages already answered by a teammate", () => {
     conversation_parts: parts,
   });
 
-  it("absorbs everything a human already handled, answers only what came after", async () => {
+  it("hands off entirely once a human has replied — no turn even on a newer message", async () => {
     const { inbox, onMessage } = build();
     await inbox.ingestConversation(
       conv({
@@ -55,10 +55,9 @@ describe("messages already answered by a teammate", () => {
         ],
       }),
     );
-    expect(onMessage).toHaveBeenCalledTimes(1);
-    const msg = onMessage.mock.calls[0][0];
-    expect(msg.body).toBe("That's all for now, thank you");
-    expect(msg.body).not.toContain("bank couldn't be linked");
+    // A human worked this conversation, so Sisi takes no turn at all -- not even
+    // on the newer "That's all for now" message.
+    expect(onMessage).not.toHaveBeenCalled();
   });
 
   it("a workflow bot's auto-reply does not count as a teammate", async () => {
