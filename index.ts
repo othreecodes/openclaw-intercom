@@ -15,6 +15,7 @@ import {
   IntercomInbox,
   summarizeContact,
   type InboundIntercomMessage,
+  intercomChannelLabel,
 } from "./src/inbox.js";
 import { registerIntercomInbox, unregisterIntercomInbox } from "./src/runtime-state.js";
 import type { ResolvedIntercomAccount } from "./src/types.js";
@@ -70,11 +71,15 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       : customerEmail
         ? `Intercom visitor <${customerEmail}>`
         : "an anonymous Intercom visitor (no name on file)";
+    // Name the channel the chat actually came in on. With WhatsApp and
+    // Instagram both live, a bare "(Intercom)" on every session makes them
+    // impossible to tell apart in the dashboard.
+    const channelLabel = intercomChannelLabel(message.channel);
     const conversationLabel = customerName
-      ? `${customerName} (Intercom)`
+      ? `${customerName} (${channelLabel})`
       : customerEmail
-        ? `${customerEmail} (Intercom)`
-        : `Intercom visitor ${message.conversationId}`;
+        ? `${customerEmail} (${channelLabel})`
+        : `${channelLabel} visitor ${message.conversationId}`;
 
     // #4 Contact context: give the agent the customer's profile before it replies.
     let profileLine = "";
