@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.10
+
+### Changed
+
+- **Session labels now name the channel the chat came in on.** Every session was
+  labelled `Name (Intercom)`, so with several channels enabled (WhatsApp and
+  Instagram both live) they were indistinguishable in the dashboard. The
+  conversation's Intercom channel is now carried on the inbound message and
+  rendered with proper capitalisation: `Name (WhatsApp)`, `Name (Instagram)`,
+  `Name (iOS)`. Falls back to `Intercom` when the channel is unknown. ([#41](https://github.com/othreecodes/openclaw-intercom/pull/41))
+
+
 ## 1.0.9
 
 ### Fixed
