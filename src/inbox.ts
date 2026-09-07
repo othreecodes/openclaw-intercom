@@ -38,6 +38,13 @@ export interface InboundIntercomMessage {
   createdAt?: number;
   /** Files the customer attached. An image-only message has an empty body. */
   attachments?: IntercomAttachment[];
+  /**
+   * Intercom's channel for the conversation ("whatsapp", "instagram", ...).
+   * Surfaced so the session label can say which channel a chat came in on --
+   * with several channels enabled, every session otherwise reads "(Intercom)"
+   * and they are indistinguishable in the dashboard.
+   */
+  channel?: string;
 }
 
 export interface IntercomInboxLogger {
@@ -242,6 +249,29 @@ export function resolveTagNames(
  * `source.type` is the older shape and still appears on some payloads; there
  * "conversation" is what the rest of the API calls "messenger".
  */
+/**
+ * Human-readable name for an Intercom channel id, for session labels.
+ * Intercom's ids are lowercase slugs ("whatsapp"), which read poorly in a UI
+ * and lose their usual capitalisation ("iOS", "WhatsApp").
+ */
+export function intercomChannelLabel(channel: string | undefined): string {
+  if (!channel) return "Intercom";
+  const known: Record<string, string> = {
+    whatsapp: "WhatsApp",
+    instagram: "Instagram",
+    facebook: "Facebook",
+    messenger: "Messenger",
+    email: "Email",
+    ios: "iOS",
+    android: "Android",
+    desktop: "Web",
+    web: "Web",
+    phone: "Phone",
+    sms: "SMS",
+  };
+  return known[channel] ?? channel.charAt(0).toUpperCase() + channel.slice(1);
+}
+
 export function conversationChannel(conversation: IntercomConversation): string | undefined {
   const raw =
     conversation.channel?.current ?? conversation.channel?.initial ?? conversation.source?.type;
@@ -549,6 +579,7 @@ export class IntercomInbox {
         pending.push({
           conversationId,
           partId: sourceId,
+          channel: conversationChannel(conversation),
           body: intercomBodyToText(source.body ?? ""),
           authorId: source.author!.id,
           authorName: source.author!.name ?? undefined,
@@ -580,6 +611,7 @@ export class IntercomInbox {
       pending.push({
         conversationId,
         partId: part.id,
+        channel: conversationChannel(conversation),
         body: intercomBodyToText(part.body ?? ""),
         authorId: part.author!.id,
         authorName: part.author!.name ?? undefined,
