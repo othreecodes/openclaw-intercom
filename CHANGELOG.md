@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.9
+
+### Fixed
+
+- **Stop replying into conversations a human teammate is handling.** On a shared
+  team queue (e.g. Socials, once WhatsApp went live), a reopened conversation
+  drops back to admin=0, so the unassigned poll let Sisi barge into a thread a
+  human was actively working (observed live: ~20 collisions in 30 min). Now, if
+  any human teammate has replied in a conversation, Sisi takes no further turn in
+  it at all -- not just skipping messages before their last reply. She only
+  handles conversations with no human turn (genuinely fresh, or bot-only). ([#40](https://github.com/othreecodes/openclaw-intercom/pull/40))
+
+
 ## 1.0.8
 
 ### Fixed
