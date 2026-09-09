@@ -10,6 +10,7 @@ import { IntercomDedupeStore } from "./src/dedupe.js";
 import { EscalatedStore } from "./src/escalated.js";
 import { OriginStore, originAsRoute } from "./src/origin.js";
 import { deliverAgentReply } from "./src/deliver.js";
+import { resolveImageDescribeModel } from "./src/media.js";
 import { describeAttachments, downloadToFile } from "./src/media.js";
 import {
   IntercomInbox,
@@ -20,6 +21,15 @@ import {
 import { registerIntercomInbox, unregisterIntercomInbox } from "./src/runtime-state.js";
 import type { ResolvedIntercomAccount } from "./src/types.js";
 import { createIntercomWebhookHandler } from "./src/webhook.js";
+
+/**
+ * Token budget for describing one customer screenshot. It has to cover the
+ * model's thinking tokens as well as the description: at the runtime default a
+ * reasoning model spent 284 tokens thinking and had 12 left for the text, so
+ * the agent got a truncated bullet and told customers their screenshot "got
+ * cut off".
+ */
+const IMAGE_DESCRIBE_MAX_TOKENS = 2000;
 
 const WEBHOOK_PATH = "/intercom/webhook";
 
@@ -107,9 +117,19 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           // agentDir is required by image understanding; resolve the routed
           // agent's directory rather than hardcoding an agent id.
           const agentId = resolveDefaultAgentId(api.config);
-          const result = await api.runtime.mediaUnderstanding.describeImageFile({
+          // describeImageFile gives the model no token budget of its own, and a
+          // reasoning model spends that budget thinking before it writes a word:
+          // observed 284 thinking tokens leaving 12 for the description, so the
+          // agent received a half-sentence and told customers their screenshot
+          // "got cut off". describeImageFileWithModel takes an explicit
+          // maxTokens, which has to cover thinking *and* the description.
+          const describeModel = resolveImageDescribeModel(api.config);
+          const result = await api.runtime.mediaUnderstanding.describeImageFileWithModel({
             filePath,
             cfg: api.config,
+            provider: describeModel.provider,
+            model: describeModel.model,
+            maxTokens: IMAGE_DESCRIBE_MAX_TOKENS,
             agentDir: resolveAgentDir(api.config, agentId),
             // A customer screenshot in a support conversation. The describer
             // once labeled the operator's own login screen as a competitor's

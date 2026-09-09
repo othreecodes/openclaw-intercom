@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.11
+
+### Fixed
+
+- **Screenshot descriptions were being truncated to a few words.** `describeImageFile`
+  passes no token budget, so the runtime default applied. Gemini 3.8 Flash is a
+  reasoning model and spent that whole budget thinking before writing anything:
+  measured 284 thinking tokens with 12 left for the description, and once 807
+  thinking tokens for a single screenshot. The agent received a half-finished
+  bullet and told customers their screenshot "got cut off", then asked them to
+  type out what was on screen. One customer sent seven screenshots and had to
+  narrate every one.
+
+  Switched to `describeImageFileWithModel`, which accepts `maxTokens`, set to
+  2000 so the budget covers thinking *and* the description. Same image now
+  returns 1474 characters and finishes with `STOP` instead of `MAX_TOKENS`.
+  Adds `resolveImageDescribeModel()` to name the provider/model explicitly, as
+  the with-model call requires. ([#42](https://github.com/othreecodes/openclaw-intercom/pull/42))
+
+
 ## 1.0.10
 
 ### Changed
