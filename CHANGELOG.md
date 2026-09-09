@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.12
+
+### Added
+
+- **Voice note support.** WhatsApp and Instagram voice notes arrive as audio
+  attachments with an empty body. The plugin only handled `image/*`, so audio
+  fell through to "[The customer attached a file]" and the agent told customers
+  *"voice notes aren't supported here in the chat, so please type it out"* —
+  on a channel where voice notes are how many people prefer to communicate.
+
+  Audio attachments are now transcribed through `transcribeAudioFile`, with a
+  prompt tuned for Nigerian English and code-switching into Pidgin, Yoruba,
+  Igbo or Hausa, keeping names, banks and amounts verbatim. The transcript is
+  handed to the agent flagged as automatic, so it confirms anything critical
+  rather than trusting a mishearing. Files over 25MB are announced but not
+  transcribed, and a failed transcription tells the agent to ask what was said
+  instead of denying voice notes work. ([#43](https://github.com/othreecodes/openclaw-intercom/pull/43))
+
+
 ## 1.0.11
 
 ### Fixed
