@@ -87,3 +87,27 @@ export async function downloadToFile(url: string, filePath: string): Promise<num
   fs.writeFileSync(filePath, buf);
   return buf.length;
 }
+
+
+/**
+ * Which provider/model to use for describing a screenshot.
+ * `describeImageFile` picks this itself but gives no token budget; the
+ * with-model call needs it named explicitly, so mirror the agent's own primary
+ * model and fall back to the first configured provider.
+ */
+export function resolveImageDescribeModel(cfg: unknown): { provider: string; model: string } {
+  const c = cfg as {
+    models?: {
+      providers?: Record<string, { models?: Array<{ id?: string }> }>;
+    };
+  };
+  const providers = c?.models?.providers ?? {};
+  const google = providers.google;
+  const googleModel = google?.models?.find((m) => typeof m?.id === "string")?.id;
+  if (googleModel) return { provider: "google", model: googleModel };
+  for (const [provider, entry] of Object.entries(providers)) {
+    const model = entry?.models?.find((m) => typeof m?.id === "string")?.id;
+    if (model) return { provider, model };
+  }
+  return { provider: "google", model: "gemini-3.8-flash" };
+}
