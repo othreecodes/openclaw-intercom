@@ -6,6 +6,9 @@ import type { IntercomInboxLogger } from "./inbox.js";
 
 /** Ignore anything larger: a 20MB "screenshot" is not a screenshot. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** Voice notes above this size are announced but not transcribed. */
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+
 /** Describe at most this many images per message; mention the rest by name. */
 const MAX_IMAGES_DESCRIBED = 3;
 
@@ -29,6 +32,11 @@ export async function describeAttachments(params: {
   logger: IntercomInboxLogger;
   download: (url: string, filePath: string) => Promise<number>;
   describe: (filePath: string) => Promise<string>;
+  /**
+   * Transcribes one voice note. Optional so existing callers and tests keep
+   * working; without it audio is still announced, just not transcribed.
+   */
+  transcribe?: (filePath: string, mime: string) => Promise<string>;
 }): Promise<string> {
   const { attachments, logger } = params;
   const lines: string[] = [];
@@ -36,7 +44,41 @@ export async function describeAttachments(params: {
 
   for (const att of attachments) {
     const name = att.name || "file";
-    const isImage = (att.content_type ?? "").startsWith("image/");
+    const type = att.content_type ?? "";
+    const isImage = type.startsWith("image/");
+    // WhatsApp and Instagram voice notes arrive as audio attachments with an
+    // empty body. Untranscribed they were announced as "a file", so the agent
+    // told customers voice notes are not supported and asked them to type.
+    const isAudio = type.startsWith("audio/") || /\.(ogg|opus|m4a|mp3|wav|aac|amr)$/i.test(name);
+    if (isAudio && att.url && params.transcribe) {
+      if ((att.filesize ?? 0) > MAX_AUDIO_BYTES) {
+        lines.push(`[The customer sent a voice note that is too long to transcribe (${name}). Ask them to summarise it in text.]`);
+        continue;
+      }
+      const aext = path.extname(name) || ".ogg";
+      const atmp = path.join(os.tmpdir(), `intercom-att-${Date.now()}-${Math.random().toString(36).slice(2)}${aext}`);
+      try {
+        await params.download(att.url, atmp);
+        const transcript = (await params.transcribe(atmp, type || "audio/ogg")).trim();
+        lines.push(
+          transcript
+            ? `[The customer sent a voice note. Automatic transcription, it may mishear names, ` +
+              `amounts or Nigerian place names, so confirm anything critical rather than assuming: ` +
+              `"${transcript}"]`
+            : `[The customer sent a voice note (${name}) but nothing could be transcribed from it. ` +
+              `Ask them what it said rather than saying voice notes are unsupported.]`,
+        );
+      } catch (err) {
+        logger.warn(`intercom: failed to transcribe ${name}: ${String(err)}`);
+        lines.push(
+          `[The customer sent a voice note (${name}) that could not be transcribed right now. ` +
+            `Ask them to type the key details. Never tell them voice notes are unsupported.]`,
+        );
+      } finally {
+        fs.rmSync(atmp, { force: true });
+      }
+      continue;
+    }
     if (!isImage || !att.url) {
       lines.push(`[The customer attached a file: ${name} (${att.content_type ?? "unknown type"})]`);
       continue;

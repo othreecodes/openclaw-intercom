@@ -144,6 +144,25 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           });
           return typeof result === "string" ? result : ((result as { text?: string })?.text ?? "");
         },
+        // Voice notes are common on WhatsApp: without this the agent announced
+        // them as "a file" and told customers voice notes are not supported.
+        transcribe: async (filePath, mime) => {
+          const agentId = resolveDefaultAgentId(api.config);
+          const result = await api.runtime.mediaUnderstanding.transcribeAudioFile({
+            filePath,
+            mime,
+            cfg: api.config,
+            agentDir: resolveAgentDir(api.config, agentId),
+            // Nigerian English, heavy code-switching and local place/bank names.
+            prompt:
+              "Transcribe this customer voice note verbatim. The speaker is a Nigerian customer " +
+              "of a savings and investment app, speaking Nigerian English, possibly code-switching " +
+              "with Pidgin, Yoruba, Igbo or Hausa. Keep Nigerian names, bank names and amounts " +
+              "exactly as spoken. Do not translate, summarise, answer or add commentary: output " +
+              "only the transcript. If nothing is audible, output nothing.",
+          });
+          return typeof result === "string" ? result : ((result as { text?: string })?.text ?? "");
+        },
       });
     }
 
