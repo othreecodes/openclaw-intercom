@@ -522,8 +522,16 @@ export class IntercomInbox {
     // First sighting only: capture where this conversation lived before Sisi
     // did anything, so an eventual escalation can hand it back there instead
     // of guessing a queue by topic.
+    // New inbound sits on the Operator bot for a beat before a workflow hands
+    // it to a team, and the poll routinely catches it inside that window. A
+    // bot admin recorded as the origin sends every later escalation straight
+    // back to an account nobody works, so it is not worth remembering.
+    const originAdminId = conversation.admin_assignee_id
+      ? String(conversation.admin_assignee_id)
+      : undefined;
+    const nonRoutable = (await this.client.nonRoutableAdminIds?.()) ?? new Set<string>();
     this.origin?.recordIfAbsent(conversationId, {
-      adminId: conversation.admin_assignee_id ? String(conversation.admin_assignee_id) : undefined,
+      adminId: originAdminId && !nonRoutable.has(originAdminId) ? originAdminId : undefined,
       teamId: conversation.team_assignee_id ? String(conversation.team_assignee_id) : undefined,
     });
     if (!this.channelAllowed(conversation)) {
