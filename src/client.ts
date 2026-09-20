@@ -10,6 +10,7 @@ const DEFAULT_RATE_LIMIT_PER_MINUTE = 500;
 const DEFAULT_MAX_ATTEMPTS = 4;
 /** Workspace tags change rarely; a short cache removes a fetch per tagged reply. */
 const DEFAULT_TAG_CACHE_TTL_MS = 5 * 60_000;
+const DEFAULT_ADMIN_CACHE_TTL_MS = 10 * 60_000;
 const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 30_000;
 /** Transient server-side failures worth retrying. */
@@ -22,6 +23,8 @@ export interface IntercomClientOptions {
   maxAttempts?: number;
   /** How long the workspace tag list stays cached. Default 5 minutes. */
   tagCacheTtlMs?: number;
+  /** How long the workspace admin list stays cached. Default 10 minutes. */
+  adminCacheTtlMs?: number;
   /** Injectable sleep, for tests. */
   sleep?: (ms: number) => Promise<void>;
   /** Injectable jitter in [0,1), for tests. */
@@ -59,6 +62,9 @@ export class IntercomClient {
   private readonly tagCacheTtlMs: number;
   private tagCache: { tags: IntercomTag[]; expiresAt: number } | null = null;
   private tagFetch: Promise<IntercomTag[]> | null = null;
+  private readonly adminCacheTtlMs: number;
+  private adminCache: { admins: IntercomAdmin[]; expiresAt: number } | null = null;
+  private adminFetch: Promise<IntercomAdmin[]> | null = null;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
 
@@ -71,6 +77,7 @@ export class IntercomClient {
     this.limiter = new TokenBucket(options.rateLimitPerMinute ?? DEFAULT_RATE_LIMIT_PER_MINUTE);
     this.maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
     this.tagCacheTtlMs = options.tagCacheTtlMs ?? DEFAULT_TAG_CACHE_TTL_MS;
+    this.adminCacheTtlMs = options.adminCacheTtlMs ?? DEFAULT_ADMIN_CACHE_TTL_MS;
     this.sleep =
       options.sleep ??
       ((ms) =>
@@ -263,6 +270,48 @@ export class IntercomClient {
         });
     }
     return this.tagFetch;
+  }
+
+  /** Every admin in the workspace, cached: the list is small and near-static. */
+  async listAdmins(): Promise<IntercomAdmin[]> {
+    const cached = this.adminCache;
+    if (cached && Date.now() < cached.expiresAt) return cached.admins;
+    if (!this.adminFetch) {
+      this.adminFetch = this.request<{ admins?: IntercomAdmin[] }>("GET", "/admins")
+        .then((data) => {
+          const admins = data.admins ?? [];
+          this.adminCache = { admins, expiresAt: Date.now() + this.adminCacheTtlMs };
+          return admins;
+        })
+        .finally(() => {
+          this.adminFetch = null;
+        });
+    }
+    return this.adminFetch;
+  }
+
+  /**
+   * Admin ids that cannot own a conversation: Operator/bot accounts and anyone
+   * without an inbox seat.
+   *
+   * New inbound sits on the Operator bot for a moment before a workflow moves
+   * it to a team, so first-sighting origin capture kept recording the bot and
+   * escalations handed conversations straight back to it -- assigned on paper,
+   * worked by nobody, and invisible to unassigned views and round-robin.
+   * Routing never targets an id in this set.
+   *
+   * Fails open (empty set) so an /admins outage degrades to the old behaviour
+   * rather than stripping every origin.
+   */
+  async nonRoutableAdminIds(): Promise<ReadonlySet<string>> {
+    try {
+      const admins = await this.listAdmins();
+      return new Set(
+        admins.filter((a) => a.has_inbox_seat === false).map((a) => String(a.id)),
+      );
+    } catch {
+      return new Set<string>();
+    }
   }
 
   /** Drop the cached tag list, e.g. after creating a tag. */

@@ -8,7 +8,7 @@ import { IntercomClient } from "./src/client.js";
 import { INTERCOM_CHANNEL_ID, resolveIntercomAccount } from "./src/config.js";
 import { IntercomDedupeStore } from "./src/dedupe.js";
 import { EscalatedStore } from "./src/escalated.js";
-import { OriginStore, originAsRoute } from "./src/origin.js";
+import { OriginStore, resolveOriginRoute } from "./src/origin.js";
 import { deliverAgentReply } from "./src/deliver.js";
 import { resolveImageDescribeModel } from "./src/media.js";
 import { describeAttachments, downloadToFile } from "./src/media.js";
@@ -20,6 +20,14 @@ import {
 } from "./src/inbox.js";
 import { registerIntercomInbox, unregisterIntercomInbox } from "./src/runtime-state.js";
 import type { ResolvedIntercomAccount } from "./src/types.js";
+import {
+  buildMemoryMetadataBlock,
+  wrapInstructionsForMemory,
+} from "./src/memory-metadata.js";
+import {
+  createMemoryProfileWriter,
+  resolveMemoryProfileConfig,
+} from "./src/memory-profile.js";
 import { createIntercomWebhookHandler } from "./src/webhook.js";
 
 /**
@@ -57,6 +65,19 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     path.join(stateDir, `escalated-${account.accountId ?? "default"}.json`),
     (message) => api.logger.error(message),
   );
+  // Peer ids in Honcho stay opaque and stable; the readable name lives in
+  // peer metadata, and only we write it. Absent config, this is a no-op.
+  const memoryProfileConfig = resolveMemoryProfileConfig(api.config);
+  const memoryProfiles = memoryProfileConfig
+    ? createMemoryProfileWriter({
+        config: memoryProfileConfig,
+        logger: { warn: (message) => api.logger.warn(message) },
+      })
+    : undefined;
+  if (!memoryProfileConfig) {
+    api.logger.info("intercom: Honcho not configured; customer names will not be published to memory");
+  }
+
   const origin = new OriginStore(
     path.join(stateDir, `origin-${account.accountId ?? "default"}.json`),
     (message) => api.logger.error(message),
@@ -93,9 +114,11 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
 
     // #4 Contact context: give the agent the customer's profile before it replies.
     let profileLine = "";
+    let contact: Awaited<ReturnType<typeof client.getContact>> | undefined;
     if (account.contactContext && message.authorId) {
       try {
-        const summary = summarizeContact(await client.getContact(message.authorId));
+        contact = await client.getContact(message.authorId);
+        const summary = summarizeContact(contact);
         if (summary) profileLine = ` Known profile — ${summary}.`;
       } catch (err) {
         api.logger.warn(
@@ -103,6 +126,17 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
         );
       }
     }
+
+    // A WhatsApp lead has no email and whatever display name they set on
+    // WhatsApp, so the phone is often the only identifier that is really
+    // theirs. Reuses the contact already fetched above -- no extra call.
+    const contactPhone = typeof contact?.phone === "string" ? contact.phone.trim() : "";
+    memoryProfiles?.record(message.authorId, {
+      name: customerName,
+      email: customerEmail,
+      channel: channelLabel,
+      phone: contactPhone || undefined,
+    });
 
     // Screenshots are half of Instagram support. Describe them through the
     // runtime's media understanding so the agent can actually read a payment
@@ -169,7 +203,11 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     // The agent reads bodyForAgent; the persona (configurable) sets the voice,
     // then we pin who it's talking to (so it never assumes the sender is David)
     // and what inline actions it can take.
+    // Everything from here to </honcho-memory> is agent-facing only: the Honcho
+    // memory plugin strips the tag before storing, so the customer profile it
+    // builds is made of the customer words, not of Sisi own instructions.
     const bodyForAgent =
+      wrapInstructionsForMemory(
       `[Intercom support chat. ${account.persona} The customer is ${customerLabel}.${profileLine} ` +
       `Do not assume the customer is David or anyone on your own team; address them by their own name (or neutrally if unnamed). ` +
       `Inline actions (put each on its own line, they are stripped before the customer sees them): ` +
@@ -177,7 +215,16 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
       escalationDirectiveHint(account) +
       `[[note: text]] to leave a private internal note; ` +
       `[[tag: label]] to tag the conversation for triage — use one directive per tag, ` +
-      `and use a tag name exactly as it already exists in the workspace.]` +
+      `and use a tag name exactly as it already exists in the workspace.]`,
+      ) +
+      // Names the customer for the memory plugin. Without it every Intercom
+      // contact collapses into its shared `owner` peer and their facts mix.
+      `\n${buildMemoryMetadataBlock({
+        contactId: message.authorId,
+        senderName: customerName || customerEmail || undefined,
+        channel: channelLabel,
+        conversationId: message.conversationId,
+      })}` +
       `\n\n${[message.body, attachmentContext].filter(Boolean).join("\n\n")}`;
     await dispatchInboundDirectDmWithRuntime({
       runtime: api.runtime,
@@ -209,6 +256,15 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           return;
         }
         const recordedOrigin = origin.get(message.conversationId);
+        const nonRoutableAdmins = (await client.nonRoutableAdminIds?.()) ?? new Set<string>();
+        const originRoute = await resolveOriginRoute({
+          conversationId: message.conversationId,
+          recordedOrigin,
+          nonRoutableAdminIds: nonRoutableAdmins,
+          getConversation: (id) => client.getConversation(id),
+          store: origin,
+          logError: (m) => api.logger.warn(m),
+        });
         const result = await deliverAgentReply({
           client,
           conversationId: message.conversationId,
@@ -220,8 +276,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
           customerMessageBody: message.body,
           // Not our own admin id: escalating "back" to ourselves would not
           // hand the conversation to a human at all.
-          originTeam:
-            recordedOrigin?.adminId === adminId ? undefined : originAsRoute(recordedOrigin),
+          originTeam: recordedOrigin?.adminId === adminId ? undefined : originRoute,
         });
         if (result.escalated) escalated.markEscalated(message.conversationId);
       },
@@ -282,6 +337,7 @@ async function startIntercomRuntime(api: OpenClawPluginApi): Promise<void> {
     description: "Stop the Intercom poll loop and release runtime state",
     cleanup: () => {
       inbox.stop();
+      memoryProfiles?.stop();
       // Fold the dedupe journal into its snapshot so the next start replays less.
       dedupe.close();
       unregisterIntercomInbox(account.accountId);

@@ -81,6 +81,12 @@ export interface ResolvedIntercomAccount {
 }
 
 export interface IntercomAdmin {
+  /**
+   * False for Operator/bot admins and anyone without a seat. They cannot work
+   * an inbox, so a conversation assigned to one is effectively unowned -- see
+   * {@link IntercomClient.nonRoutableAdminIds}.
+   */
+  has_inbox_seat?: boolean;
   type?: string;
   id: string;
   email?: string;

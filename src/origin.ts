@@ -114,6 +114,30 @@ export class OriginStore {
     if (this.journalCount >= this.compactThreshold) this.compact();
   }
 
+  /**
+   * Fill in a team we did not know at first sighting.
+   *
+   * Intercom assigns the team a moment after the conversation appears, so the
+   * poll often captures it team-less. Recording the team the first time we do
+   * see it keeps later turns from re-fetching it.
+   */
+  recordTeamIfAbsent(conversationId: string, teamId: string): void {
+    const current = this.origins.get(conversationId);
+    if (current?.teamId) return;
+    const next: OriginAssignment = { ...(current ?? {}), teamId };
+    this.origins.set(conversationId, next);
+    try {
+      fs.mkdirSync(path.dirname(this.journalFile), { recursive: true });
+      fs.appendFileSync(this.journalFile, JSON.stringify([conversationId, next]) + "\n", "utf8");
+      this.journalCount += 1;
+    } catch (err) {
+      this.logError(
+        "intercom: failed to append origin journal " + this.journalFile + ": " + String(err),
+      );
+    }
+    if (this.journalCount >= this.compactThreshold) this.compact();
+  }
+
   get size(): number {
     return this.origins.size;
   }
@@ -126,9 +150,60 @@ export class OriginStore {
  */
 export function originAsRoute(
   origin: OriginAssignment | undefined,
+  nonRoutableAdminIds?: ReadonlySet<string>,
 ): { id: string; type: "admin" | "team" } | undefined {
   if (!origin) return undefined;
   if (origin.teamId) return { id: origin.teamId, type: "team" };
-  if (origin.adminId) return { id: origin.adminId, type: "admin" };
+  // An Operator/bot admin cannot work an inbox, so handing a conversation back
+  // to one strands it. Dropping the route here (rather than only at capture
+  // time) also neutralises origins already written to disk by earlier builds.
+  if (origin.adminId && !nonRoutableAdminIds?.has(origin.adminId)) {
+    return { id: origin.adminId, type: "admin" };
+  }
+  return undefined;
+}
+
+
+/**
+ * Work out which inbox an escalation should go back to.
+ *
+ * The rule is: hand the conversation back to the team inbox it was picked up
+ * from. The complication is timing -- Intercom parks new inbound on the
+ * Operator bot for a beat before a workflow assigns the team, and the poll
+ * routinely sees it inside that window, so the origin recorded at first
+ * sighting often has no team in it. Rather than give up and let the caller
+ * guess a queue by topic, re-read the conversation: by escalation time the
+ * workflow has almost always set the team, and that team is where it came from.
+ *
+ * Order: remembered team, then the conversation's current team, then a real
+ * human admin, then nothing (the caller falls back to configured targets).
+ */
+export async function resolveOriginRoute(params: {
+  conversationId: string;
+  recordedOrigin: OriginAssignment | undefined;
+  nonRoutableAdminIds?: ReadonlySet<string>;
+  getConversation: (id: string) => Promise<{ team_assignee_id?: string | number | null }>;
+  store?: { recordTeamIfAbsent(conversationId: string, teamId: string): void };
+  logError?: (message: string) => void;
+}): Promise<{ id: string; type: "admin" | "team" } | undefined> {
+  const { conversationId, recordedOrigin, nonRoutableAdminIds, getConversation, store } = params;
+
+  if (recordedOrigin?.teamId) return { id: recordedOrigin.teamId, type: "team" };
+
+  try {
+    const live = await getConversation(conversationId);
+    const teamId = live?.team_assignee_id ? String(live.team_assignee_id) : undefined;
+    if (teamId) {
+      store?.recordTeamIfAbsent(conversationId, teamId);
+      return { id: teamId, type: "team" };
+    }
+  } catch (err) {
+    params.logError?.(
+      "intercom: could not re-read " + conversationId + " for its origin team: " + String(err),
+    );
+  }
+
+  const adminId = recordedOrigin?.adminId;
+  if (adminId && !nonRoutableAdminIds?.has(adminId)) return { id: adminId, type: "admin" };
   return undefined;
 }
