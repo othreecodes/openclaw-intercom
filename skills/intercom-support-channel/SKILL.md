@@ -1,6 +1,6 @@
 ---
 name: Intercom Support Channel
-description: Set up an autonomous, customer-facing support agent inside an Intercom inbox — WhatsApp, Instagram, Facebook, in-app Messenger, SMS, email. Use when someone wants an AI agent that answers Intercom customers directly (not an API helper for operators), wants to automate customer support conversations, or asks to connect OpenClaw to Intercom, WhatsApp support, or Instagram DMs.
+description: Set up an autonomous, customer-facing support agent inside an Intercom inbox — WhatsApp, Instagram, Facebook, in-app Messenger, SMS, email. The agent reads customer screenshots and transcribes voice notes, and hands conversations to humans cleanly. Use when someone wants an AI agent that answers Intercom customers directly (not an API helper for operators), wants to automate customer support conversations, or asks to connect OpenClaw to Intercom, WhatsApp support, or Instagram DMs.
 ---
 
 # Intercom Support Channel
@@ -18,11 +18,19 @@ draft replies on request. This makes the agent the support teammate customers ta
 - Hybrid inbound (polling + webhooks) with crash-safe dedupe — no double replies
 - One agent session per conversation; message bursts coalesce into one coherent reply
 - Reads customer screenshots (uploads and Instagram inline images) via image understanding
+- **Transcribes voice notes** — WhatsApp and Instagram audio reaches the agent as text
+  instead of "the customer attached a file"
 - Replies render as real HTML: numbered steps, bullets, bold
 - Inline actions parsed from the agent's reply: `[[close]]`, `[[escalate: reason]]`,
   `[[note: text]]`, `[[tag: label]]`
 - Escalation hands the conversation back to the inbox it came from and permanently mutes
-  the agent on it; messages a human teammate already answered are never re-answered
+  the agent on it
+- **Human ownership is absolute**: once any teammate replies in a conversation, the agent
+  takes no further turn in it, even on new customer messages. On a shared team inbox a
+  reopened conversation drops back to the queue, and without this the agent walks into
+  threads a human is actively working
+- Session labels name the channel a conversation came in on (`Ada (WhatsApp)`), so a
+  multi-channel inbox stays readable
 - First run absorbs the existing backlog instead of answering the whole inbox
 - Channel scoping: pilot on one surface (`allowedChannels: ["instagram"]`), widen later
 
@@ -33,7 +41,7 @@ draft replies on request. This makes the agent the support teammate customers ta
    on ClawHub, so every version maps to a verifiable GitHub commit):
 
    ```bash
-   openclaw plugins install clawhub:@othreecodes/openclaw-intercom@1.0.6
+   openclaw plugins install clawhub:@othreecodes/openclaw-intercom@1.0.12
    ```
 
    Check ClawHub for the latest version and its changelog before upgrading; treat plugin
@@ -80,6 +88,17 @@ confidence grows.
 
 Give the agent a support persona and grounding rules in its workspace `AGENTS.md` —
 the plugin carries the messages; the agent's quality comes from its instructions.
+
+Two things worth writing into those instructions before you go live, both learned the hard
+way on a production inbox:
+
+- **Never let the agent identify which app a screenshot belongs to.** It will get it wrong
+  in both directions — naming a competitor's app, or telling a customer their own genuine
+  screen is fake. Have it describe what it sees, believe the customer about their own
+  screen, and ask rather than assert.
+- **Scope it explicitly to your product.** Without a boundary it will cheerfully answer
+  unrelated questions, which is both off-brand and the same weakness an injected
+  instruction exploits.
 
 ## Full documentation
 
