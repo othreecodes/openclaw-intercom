@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.1.0
+
+### Fixed
+
+- **Escalation returns the conversation to the inbox it came from.** Handing
+  off used to assign to whichever queue the model named, which delivered
+  people to a teammate who had never seen the thread. The conversation now
+  goes back where it was picked up: the remembered team first, then a fresh
+  read of the conversation's current team, then a real human admin. Admins
+  without an inbox seat are filtered out, because assigning to one strands the
+  conversation somewhere nobody is looking.
+  ([#45](https://github.com/othreecodes/openclaw-intercom/pull/45))
+
+### Added
+
+- **Each customer becomes their own peer in memory.** The Honcho memory plugin
+  identifies the speaker from a `Conversation info` block that OpenClaw only
+  emits for group chats. This plugin dispatches every conversation as a direct
+  DM, so the memory service fell back to its shared `owner` peer and every
+  customer's facts piled into one profile. The block is now emitted with the
+  Intercom contact id, so a returning customer is recognised and no two
+  customers are confused for each other.
+  ([#45](https://github.com/othreecodes/openclaw-intercom/pull/45))
+
+- **The persona preamble is kept out of stored memory.** The memory plugin
+  stores the user message verbatim, and the body handed to the agent opens
+  with the whole persona block — so the service was deriving facts about the
+  customer from the agent's own instructions. The preamble is now wrapped in
+  the tag the plugin strips before storing. The agent reads it unchanged.
+  ([#45](https://github.com/othreecodes/openclaw-intercom/pull/45))
+
+- **Customer name, email and phone are published to peer metadata**, so a
+  memory console shows a person rather than an opaque id. Writing peer
+  metadata replaces the whole document, so the writer reads and merges; the
+  memory plugin creates the peer itself at the end of a turn and replaces what
+  was written, so one delayed rewrite follows. Names arrive HTML-escaped from
+  Intercom (`Akin&#39;s Alaba Ayo`) and are decoded before they are stored.
+  Every call is fire-and-forget and time-limited: memory can never delay or
+  block a reply.
+  ([#45](https://github.com/othreecodes/openclaw-intercom/pull/45))
+
 ## 1.0.12
 
 ### Added
